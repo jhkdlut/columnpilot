@@ -53,7 +53,7 @@ columnpilot/
 ├─ lib/clickhouse/              # server integration and shared types
 ├─ infra/clickhouse/initdb/     # schema and demo seed SQL
 ├─ docs/                        # architecture and development notes
-├─ .github/workflows/           # GitHub Actions CI
+├─ .github/                     # CI and contribution templates
 ├─ compose.yaml                 # local ClickHouse service
 └─ .env.example                 # documented local configuration
 ```

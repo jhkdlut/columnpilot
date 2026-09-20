@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose an improvement to ColumnPilot
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Explain the ClickHouse workflow or user need this feature would address.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: List workarounds or other approaches you considered.
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and data considerations
+      description: Note any effects on credentials, SQL permissions, imports, or network exposure.
