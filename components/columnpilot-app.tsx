@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -9,11 +9,9 @@ import {
   CircleHelp,
   Columns3,
   Database,
-  FileCode2,
   FileUp,
   HardDrive,
   Loader2,
-  Play,
   Plus,
   RefreshCw,
   Search,
@@ -21,9 +19,13 @@ import {
   Settings2,
   Table2,
   TerminalSquare,
-  UploadCloud,
 } from "lucide-react";
 import { toast } from "sonner";
+import { DEMO_COLUMNS, DEMO_RESULT, DEMO_TABLES, DEFAULT_SQL } from "@/components/columnpilot/demo-data";
+import { ImportPanel } from "@/components/columnpilot/import-panel";
+import { QueryEditor, SqlWorkspace } from "@/components/columnpilot/query-workspace";
+import { ResultTable } from "@/components/columnpilot/result-table";
+import type { ColumnInfo, ImportJob, TableInfo, View } from "@/components/columnpilot/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,8 +38,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { Progress } from "@/components/ui/progress";
 import {
   Table,
   TableBody,
@@ -47,48 +47,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
+import {
+  createImportPreview,
+  MAX_IMPORT_BYTES,
+  type ImportFormat,
+  type ImportPreview,
+} from "@/lib/clickhouse/import-preview";
 import type {
   ClickHouseConnection as Connection,
   ClickHouseQueryResult as QueryResult,
 } from "@/lib/clickhouse/types";
-
-type View = "overview" | "explorer" | "sql" | "imports";
-type TableInfo = { database: string; name: string; engine: string; total_rows: number | string | null; total_bytes: number | string | null; metadata_modification_time?: string };
-type ColumnInfo = { name: string; type: string; position: number; default_kind?: string; default_expression?: string; compression_codec?: string };
-type ImportJob = { file: string; target: string; status: "完成" | "失败" | "上传中"; rows: string; time: string };
-
-const DEMO_TABLES: TableInfo[] = [
-  { database: "columnpilot", name: "sensor_readings", engine: "MergeTree", total_rows: 148_200_000, total_bytes: 18_400_000_000 },
-  { database: "columnpilot", name: "device_events", engine: "MergeTree", total_rows: 42_800_000, total_bytes: 6_700_000_000 },
-  { database: "columnpilot", name: "maintenance_log", engine: "MergeTree", total_rows: 286_000, total_bytes: 92_000_000 },
-];
-
-const DEMO_RESULT: QueryResult = {
-  meta: [
-    { name: "device_id", type: "String" }, { name: "time", type: "DateTime64(3)" },
-    { name: "metric", type: "LowCardinality(String)" }, { name: "value", type: "Float64" }, { name: "unit", type: "String" },
-  ],
-  data: [
-    { device_id: "DV-0042", time: "2026-09-20 09:42:18", metric: "PS1", value: 148.72, unit: "bar" },
-    { device_id: "DV-0042", time: "2026-09-20 09:42:18", metric: "TS1", value: 46.18, unit: "°C" },
-    { device_id: "DV-0186", time: "2026-09-20 09:42:17", metric: "VS1", value: 1.92, unit: "mm/s" },
-    { device_id: "DV-0107", time: "2026-09-20 09:42:17", metric: "FS1", value: 38.44, unit: "L/min" },
-    { device_id: "DV-0186", time: "2026-09-20 09:42:16", metric: "EPS1", value: 2184, unit: "W" },
-  ],
-  rows: 5,
-  statistics: { elapsed: 0.018, rows_read: 8231, bytes_read: 386112 },
-};
-
-const DEMO_COLUMNS: ColumnInfo[] = DEMO_RESULT.meta.map((column, index) => ({ name: column.name, type: column.type, position: index + 1, compression_codec: index === 1 ? "Delta, ZSTD" : "ZSTD" }));
-const DEFAULT_SQL = `SELECT
-  metric, avg(value) AS avg_value
-FROM columnpilot.sensor_readings
-WHERE time >= now() - INTERVAL 1 HOUR
-GROUP BY metric
-ORDER BY avg_value DESC
-LIMIT 100`;
 
 export function ColumnPilotApp() {
   const [view, setView] = useState<View>("overview");
@@ -106,16 +75,19 @@ export function ColumnPilotApp() {
   const [queryResult, setQueryResult] = useState<QueryResult>(DEMO_RESULT);
   const [querying, setQuerying] = useState(false);
   const [tableLoading, setTableLoading] = useState(false);
+  const [explorerTab, setExplorerTab] = useState<"data" | "schema">("data");
   const [search, setSearch] = useState("");
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importTable, setImportTable] = useState("sensor_readings");
-  const [importFormat, setImportFormat] = useState("CSVWithNames");
+  const [importFormat, setImportFormat] = useState<ImportFormat>("CSVWithNames");
+  const [importColumns, setImportColumns] = useState<ColumnInfo[]>([]);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importPreviewing, setImportPreviewing] = useState(false);
+  const importSchemaRequest = useRef(0);
+  const importPreviewRequest = useRef(0);
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
-  const [jobs, setJobs] = useState<ImportJob[]>([
-    { file: "zema447_1hz.csv", target: "columnpilot.sensor_readings", status: "完成", rows: "1,440", time: "今天 09:18" },
-    { file: "maintenance_log.csv", target: "columnpilot.maintenance_log", status: "完成", rows: "286", time: "昨天 18:42" },
-  ]);
+  const [jobs, setJobs] = useState<ImportJob[]>([]);
 
   const filteredTables = useMemo(() => tables.filter((item) => `${item.database}.${item.name}`.toLowerCase().includes(search.toLowerCase())), [tables, search]);
   const clusterName = connection ? new URL(connection.endpoint).hostname : "演示集群";
@@ -149,6 +121,7 @@ export function ColumnPilotApp() {
     try {
       await callApi({ action: "ping" }, draft);
       setConnection(draft);
+      setJobs([]);
       setDialogOpen(false);
       await loadCluster(draft);
       toast.success("已连接 ClickHouse");
@@ -171,7 +144,16 @@ export function ColumnPilotApp() {
       if (metrics) setOverview(metrics);
       const nextTables = (tablesResult.data ?? []) as unknown as TableInfo[];
       setTables(nextTables);
-      if (nextTables[0]) await chooseTable(nextTables[0], activeConnection);
+      if (nextTables[0]) {
+        setImportTable(nextTables[0].name);
+        await Promise.all([
+          chooseTable(nextTables[0], activeConnection),
+          loadImportColumns(nextTables[0], activeConnection),
+        ]);
+      } else {
+        setImportColumns([]);
+        setImportTable("");
+      }
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -201,6 +183,65 @@ export function ColumnPilotApp() {
     }
   }
 
+  async function loadImportColumns(table: TableInfo, activeConnection = connection) {
+    const request = ++importSchemaRequest.current;
+    setImportTable(table.name);
+    setImportColumns([]);
+    if (!activeConnection) {
+      return;
+    }
+    try {
+      const result = await callApi({ action: "columns", database: table.database, table: table.name }, activeConnection);
+      const nextColumns = (result.data ?? []) as unknown as ColumnInfo[];
+      if (request !== importSchemaRequest.current) return;
+      setImportColumns(nextColumns);
+      if (importFile) await analyzeImportFile(importFile, importFormat, nextColumns);
+    } catch (error) {
+      if (request !== importSchemaRequest.current) return;
+      setImportColumns([]);
+      toast.error(errorMessage(error));
+    }
+  }
+
+  function selectImportTable(name: string) {
+    const table = tables.find((item) => item.name === name);
+    if (table) void loadImportColumns(table);
+  }
+
+  function selectImportFile(file: File | null) {
+    setImportFile(file);
+    void analyzeImportFile(file, importFormat, importColumns);
+  }
+
+  function selectImportFormat(format: ImportFormat) {
+    setImportFormat(format);
+    void analyzeImportFile(importFile, format, importColumns);
+  }
+
+  async function analyzeImportFile(file: File | null, format: ImportFormat, activeColumns: ColumnInfo[]) {
+    const request = ++importPreviewRequest.current;
+    setImportPreview(null);
+    setImportPreviewing(!!file);
+    if (!file) return;
+    if (file.size > MAX_IMPORT_BYTES) {
+      setImportPreview({ headers: [], rows: [], rowCount: 0, errors: ["当前版本单次上传最大 8 MB"], warnings: [] });
+      setImportPreviewing(false);
+      return;
+    }
+    try {
+      const text = await file.text();
+      if (request === importPreviewRequest.current) {
+        setImportPreview(createImportPreview(text, format, activeColumns));
+      }
+    } catch {
+      if (request === importPreviewRequest.current) {
+        setImportPreview({ headers: [], rows: [], rowCount: 0, errors: ["无法读取导入文件"], warnings: [] });
+      }
+    } finally {
+      if (request === importPreviewRequest.current) setImportPreviewing(false);
+    }
+  }
+
   async function runQuery() {
     setQuerying(true);
     try {
@@ -223,6 +264,7 @@ export function ColumnPilotApp() {
   async function startImport() {
     if (!connection) return toast.error("请先连接 ClickHouse");
     if (!importFile) return toast.error("请选择 CSV 或 JSONEachRow 文件");
+    if (!importPreview || importPreview.errors.length) return toast.error("请先修复文件预览中的问题");
     setImporting(true);
     setImportProgress(24);
     try {
@@ -234,14 +276,15 @@ export function ColumnPilotApp() {
       form.set("format", importFormat);
       setImportProgress(58);
       const response = await fetch("/api/clickhouse/import", { method: "POST", body: form });
-      const json = await response.json() as { ok: boolean; summary?: { written_rows?: number | string }; error?: string };
+      const json = await response.json() as { ok: boolean; summary?: { written_rows?: number | string }; warnings?: string[]; error?: string };
       if (!response.ok || !json.ok) throw new Error(json.error || "导入失败");
       setImportProgress(100);
-      setJobs((current) => [{ file: importFile.name, target: `${connection.database}.${importTable}`, status: "完成", rows: formatNumber(json.summary?.written_rows ?? "—"), time: "刚刚" }, ...current]);
+      setJobs((current) => [{ file: importFile.name, target: `${connection.database}.${importTable}`, status: "完成", rows: formatNumber(json.summary?.written_rows ?? importPreview.rowCount), size: formatBytes(importFile.size), time: "刚刚" }, ...current]);
       toast.success("数据已写入 ClickHouse");
-      setImportFile(null);
+      if (json.warnings?.length) toast.warning(json.warnings.join("；"));
+      selectImportFile(null);
     } catch (error) {
-      setJobs((current) => [{ file: importFile.name, target: `${connection.database}.${importTable}`, status: "失败", rows: "—", time: "刚刚" }, ...current]);
+      setJobs((current) => [{ file: importFile.name, target: `${connection.database}.${importTable}`, status: "失败", rows: "—", size: formatBytes(importFile.size), time: "刚刚" }, ...current]);
       toast.error(errorMessage(error));
     } finally {
       setTimeout(() => setImportProgress(0), 700);
@@ -263,7 +306,7 @@ export function ColumnPilotApp() {
           <Badge variant="outline" className={connection ? "hidden border-emerald-400/25 bg-emerald-400/10 text-emerald-300 sm:flex" : "hidden border-signal/25 bg-signal/10 text-signal sm:flex"}>
             <span className={`size-1.5 rounded-full ${connection ? "bg-emerald-400" : "bg-signal"}`} /> {connection ? "已连接" : "演示模式"}
           </Badge>
-          <Button variant="ghost" size="icon-sm" aria-label="帮助"><CircleHelp /></Button>
+          <Button variant="ghost" size="icon-sm" aria-label="帮助" onClick={() => window.open("https://github.com/jhkdlut/columnpilot#readme", "_blank", "noopener,noreferrer")}><CircleHelp /></Button>
           <ConnectionDialog open={dialogOpen} onOpenChange={setDialogOpen} draft={draft} setDraft={setDraft} connecting={connecting} onTest={testConnection} onConnect={connect} />
         </div>
       </header>
@@ -286,11 +329,11 @@ export function ColumnPilotApp() {
 
         <section className="min-w-0 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
           <div className="mx-auto max-w-[1440px]">
-            <PageHeader view={view} clusterName={clusterName} version={String(overview.version)} search={search} setSearch={setSearch} refreshing={refreshing} onRefresh={() => loadCluster()} />
-            {view === "overview" && <Overview metrics={overview} tables={filteredTables} preview={preview} sql={sql} setSql={setSql} querying={querying} runQuery={runQuery} onTable={(table) => { setView("explorer"); chooseTable(table); }} />}
-            {view === "explorer" && <Explorer tables={filteredTables} selected={selectedTable} preview={preview} columns={columns} loading={tableLoading} onTable={chooseTable} />}
-            {view === "sql" && <SqlWorkspace sql={sql} setSql={setSql} result={queryResult} querying={querying} runQuery={runQuery} connected={!!connection} />}
-            {view === "imports" && <Imports connected={!!connection} file={importFile} setFile={setImportFile} database={connection?.database ?? "default"} table={importTable} setTable={setImportTable} format={importFormat} setFormat={setImportFormat} importing={importing} progress={importProgress} jobs={jobs} startImport={startImport} />}
+            <PageHeader view={view} clusterName={clusterName} version={String(overview.version)} search={search} setSearch={setSearch} refreshing={refreshing} connected={!!connection} onRefresh={() => loadCluster()} />
+            {view === "overview" && <Overview metrics={overview} tables={filteredTables} preview={preview} previewTitle={`${selectedTable.database}.${selectedTable.name}`} sql={sql} setSql={setSql} querying={querying} runQuery={runQuery} onBrowseAll={() => setView("explorer")} onShowSchema={() => { setExplorerTab("schema"); setView("explorer"); }} onTable={(table) => { setExplorerTab("data"); setView("explorer"); chooseTable(table); }} />}
+            {view === "explorer" && <Explorer tables={filteredTables} selected={selectedTable} preview={preview} columns={columns} loading={tableLoading} tab={explorerTab} setTab={setExplorerTab} onTable={chooseTable} />}
+            {view === "sql" && <SqlWorkspace sql={sql} setSql={setSql} result={queryResult} querying={querying} runQuery={runQuery} connected={!!connection} database={connection?.database ?? "demo"} />}
+            {view === "imports" && <ImportPanel connected={!!connection} file={importFile} setFile={selectImportFile} database={connection?.database ?? "default"} tables={connection ? tables : []} table={importTable} setTable={selectImportTable} format={importFormat} setFormat={selectImportFormat} preview={importPreview} previewing={importPreviewing} importing={importing} progress={importProgress} jobs={jobs} startImport={startImport} />}
           </div>
         </section>
       </div>
@@ -306,44 +349,27 @@ const NAV_ITEMS: Array<{ view: View; icon: typeof Activity; label: string; badge
 ];
 
 function ConnectionDialog({ open, onOpenChange, draft, setDraft, connecting, onTest, onConnect }: { open: boolean; onOpenChange: (open: boolean) => void; draft: Connection; setDraft: (value: Connection) => void; connecting: boolean; onTest: () => void; onConnect: () => void }) {
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogTrigger asChild><Button size="sm" className="bg-signal text-slate-950 hover:bg-signal/90"><Plus /> 新建连接</Button></DialogTrigger><DialogContent className="border-border bg-card sm:max-w-xl"><DialogHeader><DialogTitle>连接 ClickHouse</DialogTitle><DialogDescription>使用 ClickHouse HTTP 接口。凭据仅保存在当前页面内存中。</DialogDescription></DialogHeader><div className="grid gap-4 py-2 sm:grid-cols-2"><Field label="HTTP(S) 地址" className="sm:col-span-2"><Input value={draft.endpoint} onChange={(event) => setDraft({ ...draft, endpoint: event.target.value })} className="font-mono" /></Field><Field label="用户名"><Input value={draft.user} onChange={(event) => setDraft({ ...draft, user: event.target.value })} /></Field><Field label="密码"><Input type="password" value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} placeholder="可留空" /></Field><Field label="默认数据库" className="sm:col-span-2"><Input value={draft.database} onChange={(event) => setDraft({ ...draft, database: event.target.value })} /></Field></div><p className="text-xs text-muted-foreground">本地预览可连接 localhost；托管版本仅允许公网 HTTPS 地址。</p><DialogFooter><Button variant="outline" onClick={onTest} disabled={connecting}>{connecting && <Loader2 className="animate-spin" />}测试连接</Button><Button onClick={onConnect} disabled={connecting} className="bg-signal text-slate-950 hover:bg-signal/90">连接</Button></DialogFooter></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogTrigger asChild><Button size="sm" className="bg-signal text-slate-950 hover:bg-signal/90"><Plus /> 新建连接</Button></DialogTrigger><DialogContent className="border-border bg-card sm:max-w-xl"><DialogHeader><DialogTitle>连接 ClickHouse</DialogTitle><DialogDescription>使用 ClickHouse HTTP 接口。凭据仅保存在当前页面内存中。</DialogDescription></DialogHeader><div className="grid gap-4 py-2 sm:grid-cols-2"><Field label="HTTP(S) 地址" className="sm:col-span-2"><Input value={draft.endpoint} onChange={(event) => setDraft({ ...draft, endpoint: event.target.value })} className="font-mono" /></Field><Field label="用户名"><Input value={draft.user} onChange={(event) => setDraft({ ...draft, user: event.target.value })} /></Field><Field label="密码"><Input type="password" value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} placeholder="可留空" /></Field><Field label="默认数据库" className="sm:col-span-2"><Input value={draft.database} onChange={(event) => setDraft({ ...draft, database: event.target.value })} /></Field></div><p className="text-xs text-muted-foreground">开发模式可连接 localhost；生产环境默认仅允许公网 HTTPS 地址。</p><DialogFooter><Button variant="outline" onClick={onTest} disabled={connecting}>{connecting && <Loader2 className="animate-spin" />}测试连接</Button><Button onClick={onConnect} disabled={connecting} className="bg-signal text-slate-950 hover:bg-signal/90">连接</Button></DialogFooter></DialogContent></Dialog>;
 }
 
-function PageHeader({ view, clusterName, version, search, setSearch, refreshing, onRefresh }: { view: View; clusterName: string; version: string; search: string; setSearch: (value: string) => void; refreshing: boolean; onRefresh: () => void }) {
+function PageHeader({ view, clusterName, version, search, setSearch, refreshing, connected, onRefresh }: { view: View; clusterName: string; version: string; search: string; setSearch: (value: string) => void; refreshing: boolean; connected: boolean; onRefresh: () => void }) {
   const titles = { overview: ["数据概览", "查看集群规模、热门数据表和实时样本"], explorer: ["数据浏览", "检查表结构并预览最多 100 行数据"], sql: ["SQL 工作台", "在安全的只读模式下分析 ClickHouse 数据"], imports: ["导入任务", "将 CSV 或 JSONEachRow 文件写入现有数据表"] };
-  return <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground"><Server className="size-3.5" /> {clusterName} <span>/</span> ClickHouse {version}</div><h1 className="text-2xl font-semibold tracking-[-0.025em]">{titles[view][0]}</h1><p className="mt-1 text-sm text-muted-foreground">{titles[view][1]}</p></div><div className="flex w-full gap-2 lg:w-auto">{(view === "overview" || view === "explorer") && <div className="relative min-w-0 flex-1 lg:w-80"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} className="h-10 bg-card pl-9" placeholder="搜索数据表…" /></div>}<Button variant="outline" size="icon-lg" onClick={onRefresh} disabled={refreshing} aria-label="刷新"><RefreshCw className={refreshing ? "animate-spin" : ""} /></Button></div></div>;
+  return <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground"><Server className="size-3.5" /> {clusterName} <span>/</span> ClickHouse {version}</div><h1 className="text-2xl font-semibold tracking-[-0.025em]">{titles[view][0]}</h1><p className="mt-1 text-sm text-muted-foreground">{titles[view][1]}</p></div><div className="flex w-full gap-2 lg:w-auto">{(view === "overview" || view === "explorer") && <div className="relative min-w-0 flex-1 lg:w-80"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} className="h-10 bg-card pl-9" placeholder="搜索数据表…" /></div>}<Button variant="outline" size="icon-lg" onClick={onRefresh} disabled={refreshing || !connected} aria-label={connected ? "刷新" : "连接 ClickHouse 后刷新"}><RefreshCw className={refreshing ? "animate-spin" : ""} /></Button></div></div>;
 }
 
-function Overview({ metrics, tables, preview, sql, setSql, querying, runQuery, onTable }: { metrics: Record<string, number | string>; tables: TableInfo[]; preview: QueryResult; sql: string; setSql: (value: string) => void; querying: boolean; runQuery: () => void; onTable: (table: TableInfo) => void }) {
-  return <><div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><MetricCard icon={Database} label="数据库" value={formatNumber(metrics.databases)} note="业务数据库" /><MetricCard icon={Table2} label="数据表" value={formatNumber(metrics.tables)} note="非系统表" /><MetricCard icon={HardDrive} label="有效数据" value={formatBytes(metrics.total_bytes)} note={`${formatNumber(metrics.total_rows)} 行`} /><MetricCard icon={Activity} label="运行时长" value={formatDuration(metrics.uptime)} note="当前节点" /></div><div className="mt-6 grid min-w-0 gap-5 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.38fr)]"><TableList tables={tables.slice(0, 6)} onTable={onTable} /><DataPreview result={preview} title="sensor_readings" /></div><QueryEditor sql={sql} setSql={setSql} querying={querying} runQuery={runQuery} compact /></>;
+function Overview({ metrics, tables, preview, previewTitle, sql, setSql, querying, runQuery, onTable, onBrowseAll, onShowSchema }: { metrics: Record<string, number | string>; tables: TableInfo[]; preview: QueryResult; previewTitle: string; sql: string; setSql: (value: string) => void; querying: boolean; runQuery: () => void; onTable: (table: TableInfo) => void; onBrowseAll: () => void; onShowSchema: () => void }) {
+  return <><div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><MetricCard icon={Database} label="数据库" value={formatNumber(metrics.databases)} note="业务数据库" /><MetricCard icon={Table2} label="数据表" value={formatNumber(metrics.tables)} note="非系统表" /><MetricCard icon={HardDrive} label="有效数据" value={formatBytes(metrics.total_bytes)} note={`${formatNumber(metrics.total_rows)} 行`} /><MetricCard icon={Activity} label="运行时长" value={formatDuration(metrics.uptime)} note="当前节点" /></div><div className="mt-6 grid min-w-0 gap-5 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.38fr)]"><TableList tables={tables.slice(0, 6)} onTable={onTable} onBrowseAll={onBrowseAll} /><DataPreview result={preview} title={previewTitle} onShowSchema={onShowSchema} /></div><QueryEditor sql={sql} setSql={setSql} querying={querying} runQuery={runQuery} compact /></>;
 }
 
-function Explorer({ tables, selected, preview, columns, loading, onTable }: { tables: TableInfo[]; selected: TableInfo; preview: QueryResult; columns: ColumnInfo[]; loading: boolean; onTable: (table: TableInfo) => void }) {
-  return <div className="mt-6 grid min-w-0 gap-5 xl:grid-cols-[300px_minmax(0,1fr)]"><section className="overflow-hidden rounded-xl border border-border bg-card"><div className="border-b border-border px-4 py-3.5"><h2 className="text-sm font-semibold">{selected.database}</h2><p className="mt-0.5 text-xs text-muted-foreground">{tables.length} 张数据表</p></div><div className="max-h-[650px] overflow-auto p-2">{tables.map((table) => <button key={`${table.database}.${table.name}`} onClick={() => onTable(table)} className={`mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition ${selected.name === table.name ? "bg-signal/10 text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}><Table2 className={selected.name === table.name ? "size-4 text-signal" : "size-4"} /><span className="min-w-0 flex-1 truncate font-mono text-xs">{table.name}</span><span className="font-mono text-[10px]">{formatCompact(table.total_rows)}</span></button>)}</div></section><section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border px-4 py-3.5"><div><h2 className="font-mono text-sm font-semibold">{selected.database}.{selected.name}</h2><p className="mt-1 text-xs text-muted-foreground">{selected.engine} · {formatNumber(selected.total_rows)} 行 · {formatBytes(selected.total_bytes)}</p></div>{loading && <Loader2 className="size-4 animate-spin text-signal" />}</div><Tabs defaultValue="data" className="gap-0"><TabsList variant="line" className="mx-4 mt-2"><TabsTrigger value="data">数据预览</TabsTrigger><TabsTrigger value="schema">表结构</TabsTrigger></TabsList><TabsContent value="data"><ResultTable result={preview} /></TabsContent><TabsContent value="schema"><Table><TableHeader><TableRow className="bg-muted/35 hover:bg-muted/35"><TableHead>#</TableHead><TableHead>字段</TableHead><TableHead>类型</TableHead><TableHead>默认值</TableHead><TableHead>压缩编码</TableHead></TableRow></TableHeader><TableBody>{columns.map((column) => <TableRow key={column.name}><TableCell className="font-mono text-xs text-muted-foreground">{column.position}</TableCell><TableCell className="font-mono text-xs">{column.name}</TableCell><TableCell className="font-mono text-xs text-sky-300">{column.type}</TableCell><TableCell className="font-mono text-xs text-muted-foreground">{column.default_expression || "—"}</TableCell><TableCell className="font-mono text-xs text-muted-foreground">{column.compression_codec || "—"}</TableCell></TableRow>)}</TableBody></Table></TabsContent></Tabs></section></div>;
+function Explorer({ tables, selected, preview, columns, loading, tab, setTab, onTable }: { tables: TableInfo[]; selected: TableInfo; preview: QueryResult; columns: ColumnInfo[]; loading: boolean; tab: "data" | "schema"; setTab: (value: "data" | "schema") => void; onTable: (table: TableInfo) => void }) {
+  return <div className="mt-6 grid min-w-0 gap-5 xl:grid-cols-[300px_minmax(0,1fr)]"><section className="overflow-hidden rounded-xl border border-border bg-card"><div className="border-b border-border px-4 py-3.5"><h2 className="text-sm font-semibold">{selected.database}</h2><p className="mt-0.5 text-xs text-muted-foreground">{tables.length} 张数据表</p></div><div className="max-h-[650px] overflow-auto p-2">{tables.map((table) => <button key={`${table.database}.${table.name}`} onClick={() => onTable(table)} className={`mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition ${selected.name === table.name ? "bg-signal/10 text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}><Table2 className={selected.name === table.name ? "size-4 text-signal" : "size-4"} /><span className="min-w-0 flex-1 truncate font-mono text-xs">{table.name}</span><span className="font-mono text-[10px]">{formatCompact(table.total_rows)}</span></button>)}</div></section><section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border px-4 py-3.5"><div><h2 className="font-mono text-sm font-semibold">{selected.database}.{selected.name}</h2><p className="mt-1 text-xs text-muted-foreground">{selected.engine} · {formatNumber(selected.total_rows)} 行 · {formatBytes(selected.total_bytes)}</p></div>{loading && <Loader2 className="size-4 animate-spin text-signal" />}</div><Tabs value={tab} onValueChange={(value) => setTab(value as "data" | "schema")} className="gap-0"><TabsList variant="line" className="mx-4 mt-2"><TabsTrigger value="data">数据预览</TabsTrigger><TabsTrigger value="schema">表结构</TabsTrigger></TabsList><TabsContent value="data"><ResultTable result={preview} /></TabsContent><TabsContent value="schema"><Table><TableHeader><TableRow className="bg-muted/35 hover:bg-muted/35"><TableHead>#</TableHead><TableHead>字段</TableHead><TableHead>类型</TableHead><TableHead>默认值</TableHead><TableHead>压缩编码</TableHead></TableRow></TableHeader><TableBody>{columns.map((column) => <TableRow key={column.name}><TableCell className="font-mono text-xs text-muted-foreground">{column.position}</TableCell><TableCell className="font-mono text-xs">{column.name}</TableCell><TableCell className="font-mono text-xs text-sky-300">{column.type}</TableCell><TableCell className="font-mono text-xs text-muted-foreground">{column.default_expression || "—"}</TableCell><TableCell className="font-mono text-xs text-muted-foreground">{column.compression_codec || "—"}</TableCell></TableRow>)}</TableBody></Table></TabsContent></Tabs></section></div>;
 }
 
-function SqlWorkspace({ sql, setSql, result, querying, runQuery, connected }: { sql: string; setSql: (value: string) => void; result: QueryResult; querying: boolean; runQuery: () => void; connected: boolean }) {
-  return <div className="mt-6 grid gap-5"><QueryEditor sql={sql} setSql={setSql} querying={querying} runQuery={runQuery} /><section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border px-4 py-3.5"><div><h2 className="text-sm font-semibold">查询结果</h2><p className="mt-0.5 text-xs text-muted-foreground">{connected ? `${result.rows ?? result.data.length} 行` : "演示结果"} · 耗时 {Math.round((result.statistics?.elapsed ?? 0) * 1000)} ms</p></div><Badge variant="outline">最多 500 行</Badge></div><ResultTable result={result} /></section></div>;
+function TableList({ tables, onTable, onBrowseAll }: { tables: TableInfo[]; onTable: (table: TableInfo) => void; onBrowseAll: () => void }) {
+  return <section className="overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border px-4 py-3.5"><div><h2 className="text-sm font-semibold">热门数据表</h2><p className="mt-0.5 text-xs text-muted-foreground">按磁盘占用排序</p></div><Button variant="ghost" size="sm" onClick={onBrowseAll}>查看全部 <ArrowRight /></Button></div><Table><TableHeader><TableRow className="bg-muted/35 hover:bg-muted/35"><TableHead>表名</TableHead><TableHead>引擎</TableHead><TableHead className="text-right">行数</TableHead><TableHead className="text-right">大小</TableHead></TableRow></TableHeader><TableBody>{tables.map((table) => <TableRow key={`${table.database}.${table.name}`} className="cursor-pointer" onClick={() => onTable(table)}><TableCell className="font-mono text-xs">{table.name}</TableCell><TableCell className="text-xs text-muted-foreground">{table.engine}</TableCell><TableCell className="text-right font-mono text-xs">{formatCompact(table.total_rows)}</TableCell><TableCell className="text-right font-mono text-xs text-muted-foreground">{formatBytes(table.total_bytes)}</TableCell></TableRow>)}</TableBody></Table></section>;
 }
 
-function Imports({ connected, file, setFile, database, table, setTable, format, setFormat, importing, progress, jobs, startImport }: { connected: boolean; file: File | null; setFile: (file: File | null) => void; database: string; table: string; setTable: (value: string) => void; format: string; setFormat: (value: string) => void; importing: boolean; progress: number; jobs: ImportJob[]; startImport: () => void }) {
-  return <div className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]"><section className="rounded-xl border border-border bg-card p-5"><div className="flex items-center gap-3"><div className="rounded-lg bg-signal/10 p-2.5 text-signal"><UploadCloud className="size-5" /></div><div><h2 className="text-sm font-semibold">导入新数据</h2><p className="mt-0.5 text-xs text-muted-foreground">写入现有 ClickHouse 数据表</p></div></div><label className="mt-5 flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-input bg-background/35 px-5 text-center transition hover:border-signal/50"><FileCode2 className="mb-3 size-7 text-muted-foreground" /><strong className="text-sm">{file ? file.name : "选择 CSV 或 JSONLines 文件"}</strong><span className="mt-1 text-xs text-muted-foreground">单次最大 8 MB · 不在应用中留存</span><Input type="file" accept=".csv,.jsonl,.ndjson,application/json,text/csv" className="sr-only" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label><div className="mt-5 grid gap-4 sm:grid-cols-2"><Field label="目标数据库"><Input value={database} disabled /></Field><Field label="目标表"><Input value={table} onChange={(event) => setTable(event.target.value)} /></Field><Field label="输入格式" className="sm:col-span-2"><NativeSelect value={format} onChange={(event) => setFormat(event.target.value)} className="w-full"><NativeSelectOption value="CSVWithNames">CSVWithNames（首行为字段名）</NativeSelectOption><NativeSelectOption value="CSV">CSV</NativeSelectOption><NativeSelectOption value="JSONEachRow">JSONEachRow</NativeSelectOption></NativeSelect></Field></div>{progress > 0 && <Progress value={progress} className="mt-5 bg-muted [&_[data-slot=progress-indicator]]:bg-signal" />}<Button className="mt-5 w-full bg-signal text-slate-950 hover:bg-signal/90" onClick={startImport} disabled={importing || !connected}>{importing ? <Loader2 className="animate-spin" /> : <FileUp />} {connected ? "开始导入" : "连接 ClickHouse 后导入"}</Button></section><section className="overflow-hidden rounded-xl border border-border bg-card"><div className="border-b border-border px-4 py-3.5"><h2 className="text-sm font-semibold">最近任务</h2><p className="mt-0.5 text-xs text-muted-foreground">当前会话中的导入结果</p></div><Table><TableHeader><TableRow className="bg-muted/35 hover:bg-muted/35"><TableHead>文件</TableHead><TableHead>目标表</TableHead><TableHead>状态</TableHead><TableHead className="text-right">行数</TableHead><TableHead className="text-right">时间</TableHead></TableRow></TableHeader><TableBody>{jobs.map((job, index) => <TableRow key={`${job.file}-${index}`}><TableCell className="font-mono text-xs">{job.file}</TableCell><TableCell className="font-mono text-xs text-muted-foreground">{job.target}</TableCell><TableCell><Badge variant="outline" className={job.status === "完成" ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-300" : job.status === "失败" ? "border-red-400/25 bg-red-400/10 text-red-300" : "border-signal/25 bg-signal/10 text-signal"}>{job.status}</Badge></TableCell><TableCell className="text-right font-mono text-xs">{job.rows}</TableCell><TableCell className="text-right text-xs text-muted-foreground">{job.time}</TableCell></TableRow>)}</TableBody></Table></section></div>;
-}
-
-function QueryEditor({ sql, setSql, querying, runQuery, compact = false }: { sql: string; setSql: (value: string) => void; querying: boolean; runQuery: () => void; compact?: boolean }) {
-  return <section className={`${compact ? "mt-5" : ""} overflow-hidden rounded-xl border border-border bg-[#0b0f14] text-slate-100 shadow-[0_18px_50px_rgba(0,0,0,0.16)]`}><div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><div className="flex items-center gap-2 text-sm font-medium"><TerminalSquare className="size-4 text-signal" /> {compact ? "快速查询" : "query.sql"}</div><span className="font-mono text-[11px] text-slate-500">Ctrl + Enter 运行</span></div><Textarea value={sql} onChange={(event) => setSql(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") runQuery(); }} className={`${compact ? "min-h-28" : "min-h-64"} resize-y rounded-none border-0 bg-transparent px-4 py-4 font-mono text-[13px] leading-6 text-slate-200 shadow-none focus-visible:ring-0`} /><div className="flex items-center justify-between border-t border-white/10 px-3 py-2.5"><span className="text-xs text-slate-500">只读模式 · 30 秒超时 · 最多 500 行</span><Button size="sm" onClick={runQuery} disabled={querying} className="bg-signal text-slate-950 hover:bg-signal/90">{querying ? <Loader2 className="animate-spin" /> : <Play className="fill-current" />} 运行查询</Button></div></section>;
-}
-
-function TableList({ tables, onTable }: { tables: TableInfo[]; onTable: (table: TableInfo) => void }) {
-  return <section className="overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border px-4 py-3.5"><div><h2 className="text-sm font-semibold">热门数据表</h2><p className="mt-0.5 text-xs text-muted-foreground">按磁盘占用排序</p></div><Button variant="ghost" size="sm">查看全部 <ArrowRight /></Button></div><Table><TableHeader><TableRow className="bg-muted/35 hover:bg-muted/35"><TableHead>表名</TableHead><TableHead>引擎</TableHead><TableHead className="text-right">行数</TableHead><TableHead className="text-right">大小</TableHead></TableRow></TableHeader><TableBody>{tables.map((table) => <TableRow key={`${table.database}.${table.name}`} className="cursor-pointer" onClick={() => onTable(table)}><TableCell className="font-mono text-xs">{table.name}</TableCell><TableCell className="text-xs text-muted-foreground">{table.engine}</TableCell><TableCell className="text-right font-mono text-xs">{formatCompact(table.total_rows)}</TableCell><TableCell className="text-right font-mono text-xs text-muted-foreground">{formatBytes(table.total_bytes)}</TableCell></TableRow>)}</TableBody></Table></section>;
-}
-
-function DataPreview({ result, title }: { result: QueryResult; title: string }) { return <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border px-4 py-3.5"><div><div className="flex items-center gap-2"><h2 className="font-mono text-sm font-semibold">{title}</h2><Badge variant="secondary">预览</Badge></div><p className="mt-0.5 text-xs text-muted-foreground">最近 {result.data.length} 行</p></div><Button variant="outline" size="sm"><Columns3 /> 字段</Button></div><ResultTable result={result} /></section>; }
-
-function ResultTable({ result }: { result: QueryResult }) {
-  const meta = result.meta ?? [];
-  return <div className="max-h-[520px] overflow-auto"><Table><TableHeader className="sticky top-0 z-10 bg-card"><TableRow className="bg-muted/70 hover:bg-muted/70">{meta.map((column) => <TableHead key={column.name} className="font-mono text-xs"><span>{column.name}</span><span className="ml-2 text-[10px] font-normal text-muted-foreground">{column.type}</span></TableHead>)}</TableRow></TableHeader><TableBody>{result.data?.length ? result.data.map((row, rowIndex) => <TableRow key={rowIndex}>{meta.map((column) => <TableCell key={column.name} className="max-w-64 truncate font-mono text-xs" title={displayValue(row[column.name])}>{displayValue(row[column.name])}</TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={Math.max(meta.length, 1)} className="h-32 text-center text-muted-foreground">查询未返回数据</TableCell></TableRow>}</TableBody></Table></div>;
-}
+function DataPreview({ result, title, onShowSchema }: { result: QueryResult; title: string; onShowSchema: () => void }) { return <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border px-4 py-3.5"><div><div className="flex items-center gap-2"><h2 className="font-mono text-sm font-semibold">{title}</h2><Badge variant="secondary">预览</Badge></div><p className="mt-0.5 text-xs text-muted-foreground">最近 {result.data.length} 行</p></div><Button variant="outline" size="sm" onClick={onShowSchema}><Columns3 /> 字段</Button></div><ResultTable result={result} /></section>; }
 
 function MetricCard({ icon: Icon, label, value, note }: { icon: typeof Database; label: string; value: string; note: string }) { return <article className="rounded-xl border border-border bg-card p-4"><div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">{label}</span><Icon className="size-4 text-muted-foreground" /></div><div className="mt-5 flex items-end justify-between gap-2"><strong className="font-mono text-2xl font-semibold tracking-tight">{value}</strong><span className="pb-0.5 text-xs text-muted-foreground">{note}</span></div></article>; }
 function Field({ label, className = "", children }: { label: string; className?: string; children: React.ReactNode }) { return <label className={`grid gap-1.5 text-sm ${className}`}>{label}{children}</label>; }
@@ -354,5 +380,4 @@ function formatNumber(value: unknown) { const number = Number(value ?? 0); retur
 function formatCompact(value: unknown) { const number = Number(value ?? 0); return Number.isFinite(number) ? new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 }).format(number) : String(value ?? "—"); }
 function formatBytes(value: unknown) { const bytes = Number(value ?? 0); if (!Number.isFinite(bytes) || bytes <= 0) return "0 B"; const units = ["B", "KB", "MB", "GB", "TB", "PB"]; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); return `${(bytes / 1024 ** index).toFixed(index > 2 ? 2 : 1)} ${units[index]}`; }
 function formatDuration(value: unknown) { const seconds = Number(value ?? 0); if (!Number.isFinite(seconds)) return "—"; if (seconds < 3600) return `${Math.floor(seconds / 60)}m`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`; return `${Math.floor(seconds / 86400)}d`; }
-function displayValue(value: unknown) { if (value === null) return "NULL"; if (value === undefined) return "—"; if (typeof value === "object") return JSON.stringify(value); return String(value); }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : "操作失败"; }

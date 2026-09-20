@@ -6,7 +6,7 @@ type QueryOptions = {
   maxRows?: number;
 };
 
-const PRIVATE_IPV4 = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+const PRIVATE_IPV4 = /^(0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/;
 
 export function validateConnection(connection: ClickHouseConnection, requestUrl: string) {
   if (!connection || typeof connection !== "object") throw new Error("缺少连接信息");
@@ -14,11 +14,12 @@ export function validateConnection(connection: ClickHouseConnection, requestUrl:
   if (!["http:", "https:"].includes(endpoint.protocol)) throw new Error("仅支持 HTTP 或 HTTPS 地址");
 
   const requestHost = new URL(requestUrl).hostname;
-  const isLocalPreview = requestHost === "localhost" || requestHost === "127.0.0.1";
-  const targetHost = endpoint.hostname.toLowerCase();
-  const privateTarget = targetHost === "localhost" || targetHost === "::1" || PRIVATE_IPV4.test(targetHost);
-  if (!isLocalPreview && endpoint.protocol !== "https:") throw new Error("托管版本仅连接 HTTPS ClickHouse 地址");
-  if (!isLocalPreview && privateTarget) throw new Error("托管版本不能访问本机或内网地址");
+  const localDevelopment = process.env.NODE_ENV !== "production" && isLoopbackTarget(requestHost);
+  const privateTargetsAllowed = localDevelopment || process.env.COLUMNPILOT_ALLOW_PRIVATE_TARGETS === "true";
+  const targetHost = endpoint.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const privateTarget = isPrivateTarget(targetHost);
+  if (!privateTargetsAllowed && endpoint.protocol !== "https:") throw new Error("托管版本仅连接 HTTPS ClickHouse 地址");
+  if (!privateTargetsAllowed && privateTarget) throw new Error("托管版本不能访问本机或内网地址");
 
   if ((connection.user ?? "").length > 128 || (connection.database ?? "").length > 256) {
     throw new Error("连接字段过长");
@@ -37,6 +38,7 @@ export async function clickhouseQuery(
   endpoint.searchParams.set("max_result_rows", String(options.maxRows ?? 500));
   endpoint.searchParams.set("result_overflow_mode", "break");
   endpoint.searchParams.set("wait_end_of_query", "1");
+  endpoint.searchParams.set("readonly", "1");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 30_000);
@@ -74,10 +76,13 @@ export async function clickhouseImport(
   table: string,
   format: "CSV" | "CSVWithNames" | "JSONEachRow",
   bytes: ArrayBuffer,
+  columns: string[],
 ) {
   const endpoint = validateConnection(connection, requestUrl);
   const target = `${quoteIdentifier(database)}.${quoteIdentifier(table)}`;
-  endpoint.searchParams.set("query", `INSERT INTO ${target} FORMAT ${format}`);
+  const columnList = columns.map(quoteIdentifier).join(", ");
+  if (!columnList) throw new Error("导入文件没有可写入字段");
+  endpoint.searchParams.set("query", `INSERT INTO ${target} (${columnList}) FORMAT ${format}`);
   endpoint.searchParams.set("wait_end_of_query", "1");
   const response = await fetch(endpoint, {
     method: "POST",
@@ -107,11 +112,111 @@ export function sqlString(value: string) {
 export function assertReadOnly(sql: string) {
   const normalized = sql.replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/g, "").trim();
   if (!normalized) throw new Error("请输入 SQL");
-  if (normalized.includes(";") && normalized.replace(/;\s*$/, "").includes(";")) throw new Error("只允许执行一条 SQL");
-  const keyword = normalized.match(/^([a-z]+)/i)?.[1]?.toUpperCase();
-  if (!["SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "WITH"].includes(keyword ?? "")) {
+  const tokens = topLevelTokens(normalized);
+  const keyword = tokens[0];
+  const effectiveKeyword = keyword === "WITH"
+    ? tokens.find((token) => ["SELECT", "INSERT", "UPDATE", "DELETE", "ALTER", "CREATE", "DROP", "TRUNCATE"].includes(token))
+    : keyword;
+  if (!["SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN"].includes(effectiveKeyword ?? "")) {
     throw new Error("只读模式仅允许 SELECT、SHOW、DESCRIBE 或 EXPLAIN");
   }
+  if (tokens.some((token, index) => token === "INTO" && ["OUTFILE", "DUMPFILE"].includes(tokens[index + 1]))) {
+    throw new Error("只读模式不允许写入文件");
+  }
+}
+
+function isPrivateTarget(hostname: string) {
+  if (isLoopbackTarget(hostname) || hostname.endsWith(".localhost")) return true;
+  if (PRIVATE_IPV4.test(hostname)) return true;
+  if (hostname === "::" || hostname === "::1") return true;
+  if (/^(?:fc|fd|fe[89ab])/i.test(hostname)) return true;
+  if (hostname.startsWith("::ffff:")) {
+    return PRIVATE_IPV4.test(hostname.slice("::ffff:".length));
+  }
+  return false;
+}
+
+function isLoopbackTarget(hostname: string) {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function topLevelTokens(sql: string) {
+  const tokens: string[] = [];
+  let token = "";
+  let depth = 0;
+  let quote: "'" | '"' | "`" | null = null;
+  let lineComment = false;
+  let blockComment = false;
+  let statementEnded = false;
+
+  const flush = () => {
+    if (token && depth === 0) tokens.push(token.toUpperCase());
+    token = "";
+  };
+
+  for (let index = 0; index < sql.length; index += 1) {
+    const character = sql[index];
+    const next = sql[index + 1];
+
+    if (lineComment) {
+      if (character === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (character === "*" && next === "/") {
+        blockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+      } else if (character === quote) {
+        if (next === quote) index += 1;
+        else quote = null;
+      }
+      continue;
+    }
+    if (character === "-" && next === "-") {
+      flush();
+      lineComment = true;
+      index += 1;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      flush();
+      blockComment = true;
+      index += 1;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      flush();
+      quote = character;
+      continue;
+    }
+    if (character === "(") {
+      flush();
+      depth += 1;
+      continue;
+    }
+    if (character === ")") {
+      flush();
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (character === ";" && depth === 0) {
+      flush();
+      statementEnded = true;
+      continue;
+    }
+    if (statementEnded && !/\s/.test(character)) throw new Error("只允许执行一条 SQL");
+    if (/[a-z0-9_]/i.test(character)) token += character;
+    else flush();
+  }
+  flush();
+  return tokens;
 }
 
 function cleanClickHouseError(message: string, status: number) {

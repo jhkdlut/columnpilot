@@ -21,7 +21,10 @@ flowchart LR
 ## Security boundaries
 
 - SQL submitted through the workbench is checked server-side and restricted to read-only statements.
-- Import writes are only exposed through the dedicated import route.
+- The browser previews imports against the selected table schema, while the import API reloads that schema and validates the file again before writing.
+- Validated imports name their destination columns explicitly, so omitted ClickHouse columns continue to use their configured defaults.
+- Import writes are only exposed through the dedicated import route and upload size is limited on both sides of the API boundary.
+- Query-result CSV and JSON exports are generated locally in the browser from the current result set.
 - Credentials are sent to the application API for each request and are not persisted by ColumnPilot.
-- Non-local deployments reject private/local ClickHouse targets and require HTTPS. Local development can connect to `http://localhost:8123`.
+- Production deployments reject private/local ClickHouse targets and require HTTPS unless the self-hosted operator explicitly enables `COLUMNPILOT_ALLOW_PRIVATE_TARGETS`. Local development can connect to `http://localhost:8123`.
 - Database permissions remain the final authority. Use a least-privilege ClickHouse account outside local development.

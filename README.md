@@ -9,7 +9,8 @@ ColumnPilot is a lightweight ClickHouse data console for browsing, querying, and
 - ClickHouse 连接测试与实例概览
 - 数据表、字段和数据预览
 - 服务端强制只读的 SQL 工作台
-- CSV、CSVWithNames 和 JSONEachRow 导入
+- CSV、CSVWithNames 和 JSONEachRow 导入预览与字段校验
+- 查询结果导出为 CSV 或 JSON
 - 单次查询 30 秒超时、最多返回 500 行
 - 凭据仅随请求使用，应用不做持久化
 - Docker Compose 本地 ClickHouse 与示例数据
@@ -44,6 +45,8 @@ Open `http://localhost:5173`, then connect with:
 
 ColumnPilot currently targets local or self-hosted deployment. The application server must be able to reach the ClickHouse HTTP endpoint.
 
+`npm run dev` allows loopback ClickHouse endpoints for local development. If a production build intentionally connects to Docker or another private-network ClickHouse server, set `COLUMNPILOT_ALLOW_PRIVATE_TARGETS=true` in the application server environment. Never enable that switch on a public multi-tenant deployment.
+
 ## Repository layout
 
 ```text
@@ -67,6 +70,7 @@ See [architecture](docs/architecture.md) and [development](docs/development.md) 
 | `npm run dev` | Start the local web app |
 | `npm run typecheck` | Run TypeScript validation |
 | `npm run lint` | Run ESLint |
+| `npm test` | Run the automated test suite |
 | `npm run build` | Create a production build |
 | `npm run clickhouse:up` | Start local ClickHouse |
 | `npm run clickhouse:down` | Stop local ClickHouse without deleting its volume |
@@ -74,7 +78,7 @@ See [architecture](docs/architecture.md) and [development](docs/development.md) 
 
 ## Security
 
-The SQL workbench is read-only, but ClickHouse permissions remain the final security boundary. Do not expose the development Compose configuration to an untrusted network. Use TLS, a strong password, restricted ports, and least-privilege ClickHouse users for non-local environments.
+The SQL workbench is read-only, but ClickHouse permissions remain the final security boundary. Production builds reject HTTP and private-network ClickHouse targets by default. Do not expose the development Compose configuration to an untrusted network. Use TLS, a strong password, restricted ports, and least-privilege ClickHouse users for non-local environments.
 
 Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 

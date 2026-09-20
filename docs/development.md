@@ -26,6 +26,7 @@ The initialization scripts run only when the Docker volume is created for the fi
 ## Quality checks
 
 ```bash
+npm test
 npm run typecheck
 npm run lint
 npm run build
@@ -35,6 +36,8 @@ docker compose config
 ## Production notes
 
 The Compose file is designed for local development. Before exposing ClickHouse to a network, replace the development password, restrict published ports, configure TLS, and create least-privilege users.
+
+Production builds reject HTTP and private-network ClickHouse endpoints by default. Set `COLUMNPILOT_ALLOW_PRIVATE_TARGETS=true` only when a trusted self-hosted application server intentionally needs to reach Docker, loopback, or another private-network ClickHouse endpoint. Local `npm run dev` sessions allow loopback targets without this switch.
 
 ## Publish to GitHub later
 

@@ -1,6 +1,6 @@
 {
   "name": "columnpilot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A lightweight ClickHouse data management console for browsing, querying, and importing data.",
   "private": true,
   "license": "MIT",
@@ -12,6 +12,7 @@
     "build": "next build",
     "start": "node .next/standalone/server.js",
     "lint": "eslint . --ignore-pattern .next",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clickhouse:up": "docker compose up -d clickhouse",
     "clickhouse:down": "docker compose down",
@@ -38,7 +39,8 @@
     "eslint": "9.39.4",
     "eslint-config-next": "16.3.4",
     "tailwindcss": "4.2.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "5.0.1"
   },
   "type": "module"
 }
