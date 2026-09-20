@@ -7,8 +7,6 @@ import {
 } from "@/lib/clickhouse/server";
 import type { ClickHouseConnection } from "@/lib/clickhouse/types";
 
-export const runtime = "edge";
-
 type RequestBody = {
   action: "ping" | "overview" | "tables" | "columns" | "preview" | "query";
   connection: ClickHouseConnection;

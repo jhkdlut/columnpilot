@@ -38,7 +38,7 @@ The Compose file is designed for local development. Before exposing ClickHouse t
 
 ## Publish to GitHub later
 
-The existing private Sites source remote is named `sites`, leaving `origin` available for GitHub. After creating an empty GitHub repository, run:
+After creating an empty GitHub repository, run:
 
 ```bash
 git remote add origin https://github.com/YOUR_ACCOUNT/columnpilot.git

@@ -13,7 +13,6 @@ ColumnPilot is a lightweight ClickHouse data console for browsing, querying, and
 - 单次查询 30 秒超时、最多返回 500 行
 - 凭据仅随请求使用，应用不做持久化
 - Docker Compose 本地 ClickHouse 与示例数据
-- 私有 Sites 部署兼容
 
 ## Quick start
 
@@ -43,7 +42,7 @@ Open `http://localhost:5173`, then connect with:
 | Password | `columnpilot_dev` by default, or your `.env` value |
 | Database | `columnpilot` |
 
-The hosted site cannot reach Docker on your computer. Use the local app for a local Docker ClickHouse instance; hosted deployments require a reachable HTTPS ClickHouse endpoint.
+ColumnPilot currently targets local or self-hosted deployment. The application server must be able to reach the ClickHouse HTTP endpoint.
 
 ## Repository layout
 
