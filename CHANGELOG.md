@@ -2,6 +2,24 @@
 
 All notable changes to ColumnPilot are documented in this file.
 
+## [0.3.0] - 2026-09-20
+
+### Added
+
+- Session-scoped history for the 20 most recent successful SQL queries, including execution time and row counts.
+- One-click loading of historical SQL back into the editor without executing it automatically.
+- Client-side pagination for query results and table previews, with 25, 50, and 100 row page sizes.
+- Focused unit tests for query-history deduplication and pagination boundaries.
+
+### Changed
+
+- Result tables now render one page at a time while CSV and JSON exports continue to include the complete result set.
+- Version development now uses dedicated release branches and feature pull requests before promotion to `main`.
+
+### Privacy
+
+- Query history stays in browser memory for the current page session and is not written to local storage.
+
 ## [0.2.0] - 2026-09-20
 
 ### Added

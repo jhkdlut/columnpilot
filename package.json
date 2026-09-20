@@ -1,6 +1,6 @@
 {
   "name": "columnpilot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A lightweight ClickHouse data management console for browsing, querying, and importing data.",
   "private": true,
   "license": "MIT",
