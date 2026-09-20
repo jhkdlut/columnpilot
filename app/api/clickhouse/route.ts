@@ -4,8 +4,8 @@ import {
   clickhouseQuery,
   quoteIdentifier,
   sqlString,
-  type ClickHouseConnection,
-} from "@/lib/clickhouse";
+} from "@/lib/clickhouse/server";
+import type { ClickHouseConnection } from "@/lib/clickhouse/types";
 
 export const runtime = "edge";
 
@@ -15,7 +15,6 @@ type RequestBody = {
   database?: string;
   table?: string;
   sql?: string;
-  allowWrite?: boolean;
 };
 
 export async function POST(request: NextRequest) {
@@ -55,7 +54,7 @@ export async function POST(request: NextRequest) {
       }
       case "query":
         sql = body.sql || "";
-        if (!body.allowWrite) assertReadOnly(sql);
+        assertReadOnly(sql);
         break;
       default:
         throw new Error("不支持的操作");

@@ -28,14 +28,16 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# Local environment files. Keep the documented template in Git.
 .env*
+!.env.example
 
 # vercel
 .vercel
 
 # typescript
 next-env.d.ts
+*.tsbuildinfo
 /dist/
 /.wrangler/
 # Checkout-local execution profile and tool state; never publish them.

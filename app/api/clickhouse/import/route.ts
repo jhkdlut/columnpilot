@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { clickhouseImport, type ClickHouseConnection } from "@/lib/clickhouse";
+import { clickhouseImport } from "@/lib/clickhouse/server";
+import type { ClickHouseConnection } from "@/lib/clickhouse/types";
 
 export const runtime = "edge";
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;

@@ -49,19 +49,20 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
+import type {
+  ClickHouseConnection as Connection,
+  ClickHouseQueryResult as QueryResult,
+} from "@/lib/clickhouse/types";
 
 type View = "overview" | "explorer" | "sql" | "imports";
-type Connection = { endpoint: string; user: string; password: string; database: string };
 type TableInfo = { database: string; name: string; engine: string; total_rows: number | string | null; total_bytes: number | string | null; metadata_modification_time?: string };
-type QueryResult = { meta: Array<{ name: string; type: string }>; data: Array<Record<string, unknown>>; rows?: number; statistics?: { elapsed?: number; rows_read?: number; bytes_read?: number } };
 type ColumnInfo = { name: string; type: string; position: number; default_kind?: string; default_expression?: string; compression_codec?: string };
 type ImportJob = { file: string; target: string; status: "完成" | "失败" | "上传中"; rows: string; time: string };
 
 const DEMO_TABLES: TableInfo[] = [
-  { database: "default", name: "sensor_readings", engine: "MergeTree", total_rows: 148_200_000, total_bytes: 18_400_000_000 },
-  { database: "default", name: "device_events", engine: "ReplacingMergeTree", total_rows: 42_800_000, total_bytes: 6_700_000_000 },
-  { database: "default", name: "maintenance_log", engine: "MergeTree", total_rows: 286_000, total_bytes: 92_000_000 },
-  { database: "default", name: "import_jobs", engine: "MergeTree", total_rows: 1_400, total_bytes: 3_800_000 },
+  { database: "columnpilot", name: "sensor_readings", engine: "MergeTree", total_rows: 148_200_000, total_bytes: 18_400_000_000 },
+  { database: "columnpilot", name: "device_events", engine: "MergeTree", total_rows: 42_800_000, total_bytes: 6_700_000_000 },
+  { database: "columnpilot", name: "maintenance_log", engine: "MergeTree", total_rows: 286_000, total_bytes: 92_000_000 },
 ];
 
 const DEMO_RESULT: QueryResult = {
@@ -83,7 +84,7 @@ const DEMO_RESULT: QueryResult = {
 const DEMO_COLUMNS: ColumnInfo[] = DEMO_RESULT.meta.map((column, index) => ({ name: column.name, type: column.type, position: index + 1, compression_codec: index === 1 ? "Delta, ZSTD" : "ZSTD" }));
 const DEFAULT_SQL = `SELECT
   metric, avg(value) AS avg_value
-FROM default.sensor_readings
+FROM columnpilot.sensor_readings
 WHERE time >= now() - INTERVAL 1 HOUR
 GROUP BY metric
 ORDER BY avg_value DESC
@@ -92,7 +93,7 @@ LIMIT 100`;
 export function ColumnPilotApp() {
   const [view, setView] = useState<View>("overview");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [draft, setDraft] = useState<Connection>({ endpoint: "http://localhost:8123", user: "default", password: "", database: "default" });
+  const [draft, setDraft] = useState<Connection>({ endpoint: "http://localhost:8123", user: "columnpilot", password: "", database: "columnpilot" });
   const [connection, setConnection] = useState<Connection | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -112,23 +113,23 @@ export function ColumnPilotApp() {
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [jobs, setJobs] = useState<ImportJob[]>([
-    { file: "zema447_1hz.csv", target: "default.sensor_readings", status: "完成", rows: "1,440", time: "今天 09:18" },
-    { file: "maintenance_log.csv", target: "default.maintenance_log", status: "完成", rows: "286", time: "昨天 18:42" },
+    { file: "zema447_1hz.csv", target: "columnpilot.sensor_readings", status: "完成", rows: "1,440", time: "今天 09:18" },
+    { file: "maintenance_log.csv", target: "columnpilot.maintenance_log", status: "完成", rows: "286", time: "昨天 18:42" },
   ]);
 
   const filteredTables = useMemo(() => tables.filter((item) => `${item.database}.${item.name}`.toLowerCase().includes(search.toLowerCase())), [tables, search]);
   const clusterName = connection ? new URL(connection.endpoint).hostname : "演示集群";
 
-  async function callApi(payload: Record<string, unknown>, activeConnection = connection) {
+  async function callApi<T = QueryResult>(payload: Record<string, unknown>, activeConnection = connection): Promise<T> {
     if (!activeConnection) throw new Error("请先连接 ClickHouse");
     const response = await fetch("/api/clickhouse", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...payload, connection: activeConnection }),
     });
-    const json = await response.json() as { ok: boolean; result: any; error?: string };
+    const json = await response.json() as { ok: boolean; result: unknown; error?: string };
     if (!response.ok || !json.ok) throw new Error(json.error || "请求失败");
-    return json.result;
+    return json.result as T;
   }
 
   async function testConnection() {
@@ -166,9 +167,9 @@ export function ColumnPilotApp() {
         callApi({ action: "overview" }, activeConnection),
         callApi({ action: "tables", database: activeConnection.database }, activeConnection),
       ]);
-      const metrics = overviewResult.data?.[0];
+      const metrics = overviewResult.data?.[0] as typeof overview | undefined;
       if (metrics) setOverview(metrics);
-      const nextTables = (tablesResult.data ?? []) as TableInfo[];
+      const nextTables = (tablesResult.data ?? []) as unknown as TableInfo[];
       setTables(nextTables);
       if (nextTables[0]) await chooseTable(nextTables[0], activeConnection);
     } catch (error) {
@@ -192,7 +193,7 @@ export function ColumnPilotApp() {
         callApi({ action: "columns", database: table.database, table: table.name }, activeConnection),
       ]);
       setPreview(previewResult);
-      setColumns(columnResult.data ?? []);
+      setColumns((columnResult.data ?? []) as unknown as ColumnInfo[]);
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -351,7 +352,7 @@ function MobileNav({ icon: Icon, label, active, onClick }: { icon: typeof Activi
 
 function formatNumber(value: unknown) { const number = Number(value ?? 0); return Number.isFinite(number) ? new Intl.NumberFormat("zh-CN").format(number) : String(value ?? "—"); }
 function formatCompact(value: unknown) { const number = Number(value ?? 0); return Number.isFinite(number) ? new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 }).format(number) : String(value ?? "—"); }
-function formatBytes(value: unknown) { let bytes = Number(value ?? 0); if (!Number.isFinite(bytes) || bytes <= 0) return "0 B"; const units = ["B", "KB", "MB", "GB", "TB", "PB"]; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); return `${(bytes / 1024 ** index).toFixed(index > 2 ? 2 : 1)} ${units[index]}`; }
+function formatBytes(value: unknown) { const bytes = Number(value ?? 0); if (!Number.isFinite(bytes) || bytes <= 0) return "0 B"; const units = ["B", "KB", "MB", "GB", "TB", "PB"]; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); return `${(bytes / 1024 ** index).toFixed(index > 2 ? 2 : 1)} ${units[index]}`; }
 function formatDuration(value: unknown) { const seconds = Number(value ?? 0); if (!Number.isFinite(seconds)) return "—"; if (seconds < 3600) return `${Math.floor(seconds / 60)}m`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`; return `${Math.floor(seconds / 86400)}d`; }
 function displayValue(value: unknown) { if (value === null) return "NULL"; if (value === undefined) return "—"; if (typeof value === "object") return JSON.stringify(value); return String(value); }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : "操作失败"; }
