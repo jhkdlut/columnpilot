@@ -9,6 +9,8 @@ ColumnPilot is a lightweight ClickHouse data console for browsing, querying, and
 - ClickHouse 连接测试与实例概览
 - 数据表、字段和数据预览
 - 服务端强制只读的 SQL 工作台
+- 当前会话内最近 20 条成功 SQL 查询历史
+- 查询结果和数据预览分页（每页 25、50 或 100 行）
 - CSV、CSVWithNames 和 JSONEachRow 导入预览与字段校验
 - 查询结果导出为 CSV 或 JSON
 - 单次查询 30 秒超时、最多返回 500 行

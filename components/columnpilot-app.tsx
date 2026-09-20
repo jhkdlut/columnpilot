@@ -54,6 +54,7 @@ import {
   type ImportFormat,
   type ImportPreview,
 } from "@/lib/clickhouse/import-preview";
+import { updateQueryHistory, type QueryHistoryItem } from "@/lib/clickhouse/query-history";
 import type {
   ClickHouseConnection as Connection,
   ClickHouseQueryResult as QueryResult,
@@ -73,6 +74,7 @@ export function ColumnPilotApp() {
   const [columns, setColumns] = useState<ColumnInfo[]>(DEMO_COLUMNS);
   const [sql, setSql] = useState(DEFAULT_SQL);
   const [queryResult, setQueryResult] = useState<QueryResult>(DEMO_RESULT);
+  const [queryHistory, setQueryHistory] = useState<QueryHistoryItem[]>([]);
   const [querying, setQuerying] = useState(false);
   const [tableLoading, setTableLoading] = useState(false);
   const [explorerTab, setExplorerTab] = useState<"data" | "schema">("data");
@@ -252,6 +254,15 @@ export function ColumnPilotApp() {
       } else {
         const result = await callApi({ action: "query", sql });
         setQueryResult(result);
+        const rows = Number(result.rows ?? result.data?.length ?? 0);
+        const elapsedMs = Math.round((result.statistics?.elapsed ?? 0) * 1000);
+        setQueryHistory((current) => updateQueryHistory(current, {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          sql,
+          executedAt: new Date().toISOString(),
+          elapsedMs,
+          rows,
+        }));
         toast.success(`查询完成，返回 ${result.rows ?? result.data?.length ?? 0} 行`);
       }
     } catch (error) {
@@ -332,7 +343,7 @@ export function ColumnPilotApp() {
             <PageHeader view={view} clusterName={clusterName} version={String(overview.version)} search={search} setSearch={setSearch} refreshing={refreshing} connected={!!connection} onRefresh={() => loadCluster()} />
             {view === "overview" && <Overview metrics={overview} tables={filteredTables} preview={preview} previewTitle={`${selectedTable.database}.${selectedTable.name}`} sql={sql} setSql={setSql} querying={querying} runQuery={runQuery} onBrowseAll={() => setView("explorer")} onShowSchema={() => { setExplorerTab("schema"); setView("explorer"); }} onTable={(table) => { setExplorerTab("data"); setView("explorer"); chooseTable(table); }} />}
             {view === "explorer" && <Explorer tables={filteredTables} selected={selectedTable} preview={preview} columns={columns} loading={tableLoading} tab={explorerTab} setTab={setExplorerTab} onTable={chooseTable} />}
-            {view === "sql" && <SqlWorkspace sql={sql} setSql={setSql} result={queryResult} querying={querying} runQuery={runQuery} connected={!!connection} database={connection?.database ?? "demo"} />}
+            {view === "sql" && <SqlWorkspace sql={sql} setSql={setSql} result={queryResult} querying={querying} runQuery={runQuery} connected={!!connection} database={connection?.database ?? "demo"} history={queryHistory} loadHistory={(historySql) => { setSql(historySql); toast.success("已载入历史查询，尚未执行"); }} clearHistory={() => setQueryHistory([])} />}
             {view === "imports" && <ImportPanel connected={!!connection} file={importFile} setFile={selectImportFile} database={connection?.database ?? "default"} tables={connection ? tables : []} table={importTable} setTable={selectImportTable} format={importFormat} setFormat={selectImportFormat} preview={importPreview} previewing={importPreviewing} importing={importing} progress={importProgress} jobs={jobs} startImport={startImport} />}
           </div>
         </section>
