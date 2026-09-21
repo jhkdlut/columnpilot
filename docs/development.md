@@ -12,7 +12,7 @@
 2. Run `npm run clickhouse:up`.
 3. Install dependencies with `npm ci`.
 4. Start ColumnPilot with `npm run dev`.
-5. Open `http://localhost:5173` and use these connection values:
+5. Open `http://localhost:3000` and use these connection values:
    - endpoint: `http://localhost:8123`
    - user: `columnpilot`
    - password: the value of `CLICKHOUSE_PASSWORD`
@@ -35,7 +35,9 @@ docker compose config
 
 ## Production notes
 
-The Compose file is designed for local development. Before exposing ClickHouse to a network, replace the development password, restrict published ports, configure TLS, and create least-privilege users.
+The Compose file can build and run the complete production stack. See [Docker deployment](deployment.md) for startup, operations, health checks, and network guidance.
+
+Before exposing ColumnPilot to a network, replace the development password, add a TLS and authentication reverse proxy, restrict published ports, and create least-privilege ClickHouse users.
 
 Production builds reject HTTP and private-network ClickHouse endpoints by default. Set `COLUMNPILOT_ALLOW_PRIVATE_TARGETS=true` only when a trusted self-hosted application server intentionally needs to reach Docker, loopback, or another private-network ClickHouse endpoint. Local `npm run dev` sessions allow loopback targets without this switch.
 

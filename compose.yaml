@@ -1,9 +1,45 @@
 name: columnpilot
 
 services:
+  columnpilot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    image: ${COLUMNPILOT_IMAGE:-columnpilot:0.4.0}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      COLUMNPILOT_ALLOW_PRIVATE_TARGETS: "true"
+    ports:
+      - "${COLUMNPILOT_BIND_ADDRESS:-127.0.0.1}:${COLUMNPILOT_PORT:-3000}:3000"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /app/.next/cache:size=128m,uid=1001,gid=1001,mode=0755
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/api/health')
+          .then((response) => { if (!response.ok) process.exit(1) })
+          .catch(() => process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   clickhouse:
     image: clickhouse:26.8.6.5
-    container_name: columnpilot-clickhouse
     restart: unless-stopped
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-columnpilot}

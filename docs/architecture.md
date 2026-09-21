@@ -4,9 +4,11 @@ ColumnPilot is a small full-stack web console. The browser never connects to Cli
 
 ```mermaid
 flowchart LR
-  Browser[ColumnPilot browser UI] -->|JSON / multipart| API[Next.js API routes]
+  Browser[ColumnPilot browser UI] -->|JSON / multipart| Web[ColumnPilot web container]
+  Web --> API[Next.js API routes]
   API -->|HTTP interface :8123| CH[(ClickHouse)]
-  Compose[Docker Compose] --> CH
+  Compose[Docker Compose] --> Web
+  Compose --> CH
   Init[infra/clickhouse/initdb] --> CH
 ```
 
@@ -17,6 +19,8 @@ flowchart LR
 - `lib/clickhouse/`: connection validation, query execution, imports, and shared types.
 - `infra/clickhouse/`: Docker initialization SQL.
 - `docs/`: architecture and development notes.
+- `Dockerfile`: multi-stage production build running as an unprivileged user.
+- `compose.yaml`: complete web and ClickHouse deployment with health checks.
 
 ## Security boundaries
 
@@ -28,3 +32,4 @@ flowchart LR
 - Credentials are sent to the application API for each request and are not persisted by ColumnPilot.
 - Production deployments reject private/local ClickHouse targets and require HTTPS unless the self-hosted operator explicitly enables `COLUMNPILOT_ALLOW_PRIVATE_TARGETS`. Local development can connect to `http://localhost:8123`.
 - Database permissions remain the final authority. Use a least-privilege ClickHouse account outside local development.
+- The production container drops Linux capabilities, uses a read-only root filesystem, and exposes a minimal health endpoint that does not include credentials or database details.

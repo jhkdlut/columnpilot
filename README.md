@@ -15,28 +15,40 @@ ColumnPilot is a lightweight ClickHouse data console for browsing, querying, and
 - 查询结果导出为 CSV 或 JSON
 - 单次查询 30 秒超时、最多返回 500 行
 - 凭据仅随请求使用，应用不做持久化
-- Docker Compose 本地 ClickHouse 与示例数据
+- 非 root、只读文件系统的生产 Docker 镜像
+- 完整 Docker Compose 部署、健康检查、本地 ClickHouse 与示例数据
 
 ## Quick start
 
-### 1. Start ClickHouse
+### Option A: start the complete Docker stack
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d --build
+docker compose ps
+```
+
+Open `http://localhost:3000`, then connect to `http://clickhouse:8123` with the credentials in `.env`.
+
+The stack builds the production ColumnPilot image, uses the official `clickhouse:26.8.6.5` image, and initializes three demo tables on the first run. See [Docker deployment](docs/deployment.md) for operations and safe network exposure.
+
+### Option B: local application development
+
+Start only ClickHouse:
 
 ```powershell
 Copy-Item .env.example .env
 docker compose up -d clickhouse
-docker compose ps
 ```
 
-The Compose stack uses the official `clickhouse:26.8.6.5` image and initializes three demo tables on the first run.
-
-### 2. Start ColumnPilot
+Then start ColumnPilot from the host:
 
 ```powershell
 npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`, then connect with:
+Open `http://localhost:3000`, then connect with:
 
 | Field | Value |
 | --- | --- |
@@ -59,8 +71,9 @@ columnpilot/
 ├─ infra/clickhouse/initdb/     # schema and demo seed SQL
 ├─ docs/                        # architecture and development notes
 ├─ .github/                     # CI and contribution templates
-├─ compose.yaml                 # local ClickHouse service
-└─ .env.example                 # documented local configuration
+├─ Dockerfile                   # production standalone web image
+├─ compose.yaml                 # web and ClickHouse deployment
+└─ .env.example                 # documented deployment configuration
 ```
 
 See [architecture](docs/architecture.md) and [development](docs/development.md) for more detail.
@@ -77,6 +90,9 @@ See [architecture](docs/architecture.md) and [development](docs/development.md) 
 | `npm run clickhouse:up` | Start local ClickHouse |
 | `npm run clickhouse:down` | Stop local ClickHouse without deleting its volume |
 | `npm run clickhouse:logs` | Follow ClickHouse logs |
+| `npm run docker:up` | Build and start the complete Docker stack |
+| `npm run docker:down` | Stop the stack without deleting database volumes |
+| `npm run docker:logs` | Follow web and ClickHouse logs |
 
 ## Security
 
