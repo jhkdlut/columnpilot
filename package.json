@@ -1,6 +1,6 @@
 {
   "name": "columnpilot",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A lightweight ClickHouse data management console for browsing, querying, and importing data.",
   "private": true,
   "license": "MIT",
@@ -16,7 +16,10 @@
     "typecheck": "tsc --noEmit",
     "clickhouse:up": "docker compose up -d clickhouse",
     "clickhouse:down": "docker compose down",
-    "clickhouse:logs": "docker compose logs -f clickhouse"
+    "clickhouse:logs": "docker compose logs -f clickhouse",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f columnpilot clickhouse"
   },
   "dependencies": {
     "class-variance-authority": "0.7.1",

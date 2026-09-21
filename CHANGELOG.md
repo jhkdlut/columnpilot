@@ -2,6 +2,26 @@
 
 All notable changes to ColumnPilot are documented in this file.
 
+## [0.4.0] - 2026-09-21
+
+### Added
+
+- Multi-stage production Docker image for the Next.js standalone server.
+- Complete Compose deployment for the ColumnPilot web service and ClickHouse.
+- Application health endpoint and container health checks.
+- Dedicated Docker deployment and operations guide.
+
+### Security
+
+- The web container runs as an unprivileged user with all Linux capabilities dropped.
+- The Compose deployment uses a read-only root filesystem with memory-backed runtime cache directories.
+- Web and ClickHouse ports remain bound to loopback by default.
+
+### Changed
+
+- Added Docker image builds to continuous integration.
+- Updated package metadata to version 0.4.0.
+
 ## [0.3.0] - 2026-09-20
 
 ### Added
