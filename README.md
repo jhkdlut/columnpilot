@@ -14,6 +14,7 @@ ColumnPilot is a lightweight ClickHouse data console for browsing, querying, and
 - CSV、CSVWithNames 和 JSONEachRow 导入预览与字段校验
 - 查询结果导出为 CSV 或 JSON
 - 单次查询 30 秒超时、最多返回 500 行
+- 单次导入 30 秒超时，并在超时后主动取消请求
 - 凭据仅随请求使用，应用不做持久化
 - 非 root、只读文件系统的生产 Docker 镜像
 - 完整 Docker Compose 部署、健康检查、本地 ClickHouse 与示例数据
@@ -96,7 +97,7 @@ See [architecture](docs/architecture.md) and [development](docs/development.md) 
 
 ## Security
 
-The SQL workbench is read-only, but ClickHouse permissions remain the final security boundary. Production builds reject HTTP and private-network ClickHouse targets by default. Do not expose the development Compose configuration to an untrusted network. Use TLS, a strong password, restricted ports, and least-privilege ClickHouse users for non-local environments.
+The SQL workbench is read-only, but ClickHouse permissions remain the final security boundary. Production builds reject HTTP endpoints and pin DNS resolution to validated public IP addresses by default, preventing hostnames from resolving to private or reserved networks. Do not expose the development Compose configuration to an untrusted network. Use TLS, a strong password, restricted ports, and least-privilege ClickHouse users for non-local environments.
 
 Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 

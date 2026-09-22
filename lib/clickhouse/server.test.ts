@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const dnsLookupMock = vi.hoisted(() => vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]));
+
+vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
+
 import {
   assertReadOnly,
+  clickhouseImport,
   clickhouseQuery,
   quoteIdentifier,
   sqlString,
@@ -15,6 +21,9 @@ const connection = {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
+  dnsLookupMock.mockReset();
+  dnsLookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -29,6 +38,7 @@ describe("validateConnection", () => {
     "https://10.0.0.2:8443",
     "https://100.64.0.1:8443",
     "https://[::1]:8443",
+    "https://[::ffff:7f00:1]:8443",
     "https://[fd00::1]:8443",
   ])("rejects private targets from a non-local deployment: %s", (endpoint) => {
     expect(() => validateConnection({ ...connection, endpoint }, "https://columnpilot.example/api")).toThrow(/不能访问本机或内网/);
@@ -47,6 +57,15 @@ describe("validateConnection", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("COLUMNPILOT_ALLOW_PRIVATE_TARGETS", "true");
     expect(validateConnection(connection, "http://columnpilot.internal/api").hostname).toBe("localhost");
+  });
+
+  it.each([
+    "https://192.0.2.1:8443",
+    "https://198.51.100.2:8443",
+    "https://203.0.113.3:8443",
+    "https://[2001:db8::1]:8443",
+  ])("rejects reserved targets from a non-local deployment: %s", (endpoint) => {
+    expect(() => validateConnection({ ...connection, endpoint }, "https://columnpilot.example/api")).toThrow(/不能访问本机或内网/);
   });
 });
 
@@ -90,5 +109,67 @@ describe("clickhouseQuery", () => {
     const endpoint = fetchMock.mock.calls[0][0] as URL;
     expect(endpoint.searchParams.get("readonly")).toBe("1");
     expect(endpoint.searchParams.get("max_result_rows")).toBe("500");
+  });
+
+  it("rejects a public hostname when DNS includes a private address", async () => {
+    dnsLookupMock.mockResolvedValue([
+      { address: "93.184.216.34", family: 4 },
+      { address: "10.0.0.5", family: 4 },
+    ]);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(clickhouseQuery(
+      { ...connection, endpoint: "https://clickhouse.example" },
+      "SELECT 1",
+      "https://columnpilot.example/api",
+    )).rejects.toThrow(/解析到本机或内网/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("pins a public hostname to its validated DNS results", async () => {
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      void args;
+      return new Response(JSON.stringify({ meta: [], data: [], rows: 0 }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await clickhouseQuery(
+      { ...connection, endpoint: "https://clickhouse.example" },
+      "SELECT 1",
+      "https://columnpilot.example/api",
+    );
+
+    expect(dnsLookupMock).toHaveBeenCalledWith("clickhouse.example", { all: true, verbatim: true });
+    const requestOptions = fetchMock.mock.calls[0][1] as RequestInit & { dispatcher?: unknown };
+    expect(requestOptions.dispatcher).toBeDefined();
+  });
+});
+
+describe("clickhouseImport", () => {
+  it("aborts imports that exceed the configured timeout", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      })
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const importPromise = clickhouseImport(
+      connection,
+      "http://localhost:3000/api",
+      "columnpilot",
+      "events",
+      "CSVWithNames",
+      new TextEncoder().encode("id\n1").buffer,
+      ["id"],
+      { timeoutMs: 25 },
+    );
+    const assertion = expect(importPromise).rejects.toThrow("导入超过时间限制");
+
+    await vi.advanceTimersByTimeAsync(25);
+    await assertion;
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

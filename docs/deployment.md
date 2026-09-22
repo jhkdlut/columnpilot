@@ -2,6 +2,8 @@
 
 ColumnPilot ships as a production Next.js standalone image and a Compose stack containing both the web console and ClickHouse. The defaults bind both services to loopback, which is appropriate for a single-machine deployment.
 
+In hosted mode, ColumnPilot resolves the ClickHouse hostname before connecting, rejects private or reserved addresses, and pins the request to the validated DNS results. The Compose stack explicitly enables private targets because the application must reach the internal `clickhouse` service.
+
 Compose-generated container and volume names are scoped by the project name, so multiple checked-out versions can be tested without sharing database storage.
 
 ## Start the complete stack
@@ -57,7 +59,7 @@ Compose sets `COLUMNPILOT_ALLOW_PRIVATE_TARGETS=true` for the web container beca
 Set `COLUMNPILOT_IMAGE` to an image published by your own registry. Compose retains the local `build` definition, so use `--no-build` to start exactly that image:
 
 ```powershell
-$env:COLUMNPILOT_IMAGE = "ghcr.io/your-account/columnpilot:0.4.0"
+$env:COLUMNPILOT_IMAGE = "ghcr.io/your-account/columnpilot:0.4.1"
 docker compose pull columnpilot
 docker compose up -d --no-build
 ```
