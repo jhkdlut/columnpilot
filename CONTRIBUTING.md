@@ -10,4 +10,6 @@ Thanks for improving ColumnPilot.
 
 For changes to SQL safety or connection validation, include focused tests or a reproducible verification procedure. Security issues should follow `SECURITY.md` instead of a public issue.
 
+For Docker, first-run initialization, or deployment changes, build `columnpilot:ci` and run `npm run test:compose` as described in `docs/development.md`. CI repeats this check against both the default and a custom database, including restart persistence. Managed local validation runs in the `agent` Conda environment.
+
 Dependabot checks npm, Docker, and GitHub Actions dependencies every week. CodeQL scans JavaScript and TypeScript changes on pull requests, release branches, and the default branch.

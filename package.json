@@ -13,6 +13,7 @@
     "start": "node .next/standalone/server.js",
     "lint": "eslint . --ignore-pattern .next",
     "test": "vitest run",
+    "test:compose": "node scripts/compose-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "clickhouse:up": "docker compose up -d clickhouse",
     "clickhouse:down": "docker compose down",
