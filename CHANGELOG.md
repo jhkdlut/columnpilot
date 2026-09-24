@@ -2,6 +2,27 @@
 
 All notable changes to ColumnPilot are documented in this file.
 
+## [0.4.1] - 2026-09-24
+
+### Fixed
+
+- Reject redirects for ClickHouse queries and imports so redirects cannot bypass endpoint restrictions or forward credentials to a new destination.
+- Apply query and import-write deadlines to DNS resolution, connection setup, and response reading; late DNS results cannot start an expired request.
+- Initialize demo tables in the configured `CLICKHOUSE_DB`, including custom database names, without changing existing volumes.
+- Align the environment template and Compose image tag with version 0.4.1.
+
+### Added
+
+- Default 30-second cancellation for import-write requests.
+- Public-address DNS validation and connection pinning for hosted deployments.
+- Weekly Dependabot checks for npm, Docker, and GitHub Actions, and CodeQL security analysis.
+- Docker Compose first-start acceptance checks for default/custom databases, API connectivity, CSV import, and restart persistence.
+
+### Documentation
+
+- Document existing-volume upgrades and isolation by Compose project name and host ports.
+- Require automated tests and applicable deployment acceptance checks for contributions.
+
 ## [0.4.0] - 2026-09-21
 
 ### Added

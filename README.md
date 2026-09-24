@@ -14,6 +14,7 @@ ColumnPilot is a lightweight ClickHouse data console for browsing, querying, and
 - CSV、CSVWithNames 和 JSONEachRow 导入预览与字段校验
 - 查询结果导出为 CSV 或 JSON
 - 单次查询 30 秒超时、最多返回 500 行
+- 查询与导入写入请求的 30 秒限时包含 DNS 解析，超时主动取消请求
 - 凭据仅随请求使用，应用不做持久化
 - 非 root、只读文件系统的生产 Docker 镜像
 - 完整 Docker Compose 部署、健康检查、本地 ClickHouse 与示例数据
@@ -30,7 +31,7 @@ docker compose ps
 
 Open `http://localhost:3000`, then connect to `http://clickhouse:8123` with the credentials in `.env`.
 
-The stack builds the production ColumnPilot image, uses the official `clickhouse:26.8.6.5` image, and initializes three demo tables on the first run. See [Docker deployment](docs/deployment.md) for operations and safe network exposure.
+The stack builds the production ColumnPilot image, uses the official `clickhouse:26.8.6.5` image, and initializes three demo tables in `CLICKHOUSE_DB` on the first run (`columnpilot` by default). See [Docker deployment](docs/deployment.md) for existing-volume upgrades, isolated version testing, and network exposure.
 
 ### Option B: local application development
 
@@ -86,6 +87,7 @@ See [architecture](docs/architecture.md) and [development](docs/development.md) 
 | `npm run typecheck` | Run TypeScript validation |
 | `npm run lint` | Run ESLint |
 | `npm test` | Run the automated test suite |
+| `npm run test:compose` | Verify fresh Docker deployments using a prebuilt `columnpilot:ci` image |
 | `npm run build` | Create a production build |
 | `npm run clickhouse:up` | Start local ClickHouse |
 | `npm run clickhouse:down` | Stop local ClickHouse without deleting its volume |
@@ -96,7 +98,7 @@ See [architecture](docs/architecture.md) and [development](docs/development.md) 
 
 ## Security
 
-The SQL workbench is read-only, but ClickHouse permissions remain the final security boundary. Production builds reject HTTP and private-network ClickHouse targets by default. Do not expose the development Compose configuration to an untrusted network. Use TLS, a strong password, restricted ports, and least-privilege ClickHouse users for non-local environments.
+The SQL workbench is read-only, but ClickHouse permissions remain the final security boundary. Production builds reject HTTP endpoints and pin DNS resolution to validated public IP addresses by default, preventing hostnames from resolving to private or reserved networks. Queries and imports reject HTTP redirects; use the final ClickHouse endpoint directly. DNS resolution, the outbound request, and response-body reading share the same request timeout. Do not expose the development Compose configuration to an untrusted network. Use TLS, a strong password, restricted ports, and least-privilege ClickHouse users for non-local environments.
 
 Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 

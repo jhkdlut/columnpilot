@@ -24,3 +24,4 @@ jobs:
       - run: npm run build
       - run: docker compose config
       - run: docker build --tag columnpilot:ci .
+      - run: npm run test:compose

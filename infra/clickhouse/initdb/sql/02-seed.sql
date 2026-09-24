@@ -1,3 +1,4 @@
+-- First-run demo data only; the entrypoint skips this on existing volumes.
 INSERT INTO sensor_readings (time, device_id, metric, value, unit) VALUES
     (now64(3) - INTERVAL 5 MINUTE, 'DV-0042', 'PS1', 148.72, 'bar'),
     (now64(3) - INTERVAL 4 MINUTE, 'DV-0042', 'TS1', 46.18, '°C'),

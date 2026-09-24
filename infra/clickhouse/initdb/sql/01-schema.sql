@@ -1,3 +1,4 @@
+-- The initialization wrapper selects CLICKHOUSE_DB for this entire file.
 CREATE TABLE IF NOT EXISTS sensor_readings
 (
     time DateTime64(3, 'UTC'),

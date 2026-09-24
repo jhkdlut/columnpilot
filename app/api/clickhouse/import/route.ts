@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
       requestedFormat as ImportFormat,
       bytes,
       preview.headers,
+      { timeoutMs: 30_000 },
     );
     return NextResponse.json({ ok: true, summary, warnings: preview.warnings });
   } catch (error) {

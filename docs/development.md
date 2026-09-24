@@ -23,6 +23,8 @@ Both ports are bound to `127.0.0.1` by default and are not exposed to the local 
 
 The initialization scripts run only when the Docker volume is created for the first time. `docker compose down` keeps data; `docker compose down --volumes` permanently removes the local ClickHouse data and should be used deliberately.
 
+Fresh volumes put the example tables in `CLICKHOUSE_DB`. For volumes created by older versions with tables in `default`, follow the [existing-deployment upgrade notes](deployment.md#upgrade-an-existing-deployment); restarting does not migrate or reseed data.
+
 ## Quality checks
 
 ```bash
@@ -32,6 +34,17 @@ npm run lint
 npm run build
 docker compose config
 ```
+
+For Docker or initialization changes, also run the same first-start acceptance check used by CI:
+
+```bash
+docker build --tag columnpilot:ci .
+npm run test:compose
+```
+
+The smoke check runs default and custom database configurations with unique Compose project names, temporary volumes, local dynamic ports, and test-only credentials. It verifies initial tables and row counts, API connectivity, a CSV import, and persistence without repeated seeding after restart. It removes only the temporary projects and volumes it creates, including on failure. Set `COLUMNPILOT_SMOKE_IMAGE` to test a different prebuilt image.
+
+In this project's managed local workflow, run validation commands through the `agent` Conda environment, for example `conda run -n agent --no-capture-output npm test` and `conda run -n agent --no-capture-output npm run test:compose`.
 
 ## Production notes
 

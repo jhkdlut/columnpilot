@@ -1,3 +1,8 @@
+import { lookup } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
+import type { LookupFunction } from "node:net";
+import ipaddr from "ipaddr.js";
+import { Agent, type Dispatcher } from "undici";
 import type { ClickHouseConnection } from "./types";
 
 type QueryOptions = {
@@ -6,20 +11,21 @@ type QueryOptions = {
   maxRows?: number;
 };
 
-const PRIVATE_IPV4 = /^(0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/;
+type PreparedTarget = {
+  endpoint: URL;
+  dispatcher?: Dispatcher;
+};
 
 export function validateConnection(connection: ClickHouseConnection, requestUrl: string) {
   if (!connection || typeof connection !== "object") throw new Error("缺少连接信息");
   const endpoint = new URL(connection.endpoint);
   if (!["http:", "https:"].includes(endpoint.protocol)) throw new Error("仅支持 HTTP 或 HTTPS 地址");
 
-  const requestHost = new URL(requestUrl).hostname;
-  const localDevelopment = process.env.NODE_ENV !== "production" && isLoopbackTarget(requestHost);
-  const privateTargetsAllowed = localDevelopment || process.env.COLUMNPILOT_ALLOW_PRIVATE_TARGETS === "true";
+  const allowPrivateTargets = privateTargetsAllowed(requestUrl);
   const targetHost = endpoint.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   const privateTarget = isPrivateTarget(targetHost);
-  if (!privateTargetsAllowed && endpoint.protocol !== "https:") throw new Error("托管版本仅连接 HTTPS ClickHouse 地址");
-  if (!privateTargetsAllowed && privateTarget) throw new Error("托管版本不能访问本机或内网地址");
+  if (!allowPrivateTargets && endpoint.protocol !== "https:") throw new Error("托管版本仅连接 HTTPS ClickHouse 地址");
+  if (!allowPrivateTargets && privateTarget) throw new Error("托管版本不能访问本机或内网地址");
 
   if ((connection.user ?? "").length > 128 || (connection.database ?? "").length > 256) {
     throw new Error("连接字段过长");
@@ -33,16 +39,13 @@ export async function clickhouseQuery(
   requestUrl: string,
   options: QueryOptions = {},
 ) {
-  const endpoint = validateConnection(connection, requestUrl);
-  endpoint.searchParams.set("max_execution_time", String(Math.ceil((options.timeoutMs ?? 30_000) / 1000)));
-  endpoint.searchParams.set("max_result_rows", String(options.maxRows ?? 500));
-  endpoint.searchParams.set("result_overflow_mode", "break");
-  endpoint.searchParams.set("wait_end_of_query", "1");
-  endpoint.searchParams.set("readonly", "1");
+  return withTarget(connection, requestUrl, options.timeoutMs ?? 30_000, "查询超过时间限制", async ({ endpoint, dispatcher }, signal) => {
+    endpoint.searchParams.set("max_execution_time", String(Math.ceil((options.timeoutMs ?? 30_000) / 1000)));
+    endpoint.searchParams.set("max_result_rows", String(options.maxRows ?? 500));
+    endpoint.searchParams.set("result_overflow_mode", "break");
+    endpoint.searchParams.set("wait_end_of_query", "1");
+    endpoint.searchParams.set("readonly", "1");
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 30_000);
-  try {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
@@ -53,20 +56,18 @@ export async function clickhouseQuery(
         "x-clickhouse-format": options.format ?? "JSON",
       },
       body: sql,
-      signal: controller.signal,
-    });
+      dispatcher,
+      signal,
+      redirect: "manual",
+    } as RequestInit & { dispatcher?: Dispatcher });
+    await rejectRedirect(response);
     const text = await response.text();
     if (!response.ok) throw new Error(cleanClickHouseError(text, response.status));
     if ((options.format ?? "JSON") === "JSON") {
       return text ? JSON.parse(text) : { meta: [], data: [], rows: 0 };
     }
     return text;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw new Error("查询超过时间限制");
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
+  });
 }
 
 export async function clickhouseImport(
@@ -77,27 +78,130 @@ export async function clickhouseImport(
   format: "CSV" | "CSVWithNames" | "JSONEachRow",
   bytes: ArrayBuffer,
   columns: string[],
+  options: Pick<QueryOptions, "timeoutMs"> = {},
 ) {
-  const endpoint = validateConnection(connection, requestUrl);
   const target = `${quoteIdentifier(database)}.${quoteIdentifier(table)}`;
   const columnList = columns.map(quoteIdentifier).join(", ");
   if (!columnList) throw new Error("导入文件没有可写入字段");
-  endpoint.searchParams.set("query", `INSERT INTO ${target} (${columnList}) FORMAT ${format}`);
-  endpoint.searchParams.set("wait_end_of_query", "1");
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/octet-stream",
-      "x-clickhouse-user": connection.user || "default",
-      "x-clickhouse-key": connection.password || "",
-      "x-clickhouse-database": database,
-    },
-    body: bytes,
+  return withTarget(connection, requestUrl, options.timeoutMs ?? 30_000, "导入超过时间限制", async ({ endpoint, dispatcher }, signal) => {
+    endpoint.searchParams.set("query", `INSERT INTO ${target} (${columnList}) FORMAT ${format}`);
+    endpoint.searchParams.set("max_execution_time", String(Math.ceil((options.timeoutMs ?? 30_000) / 1000)));
+    endpoint.searchParams.set("wait_end_of_query", "1");
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-clickhouse-user": connection.user || "default",
+        "x-clickhouse-key": connection.password || "",
+        "x-clickhouse-database": database,
+      },
+      body: bytes,
+      dispatcher,
+      signal,
+      redirect: "manual",
+    } as RequestInit & { dispatcher?: Dispatcher });
+    await rejectRedirect(response);
+    const text = await response.text();
+    if (!response.ok) throw new Error(cleanClickHouseError(text, response.status));
+    const summary = response.headers.get("x-clickhouse-summary");
+    return summary ? JSON.parse(summary) : { written_rows: null, written_bytes: bytes.byteLength };
   });
-  const text = await response.text();
-  if (!response.ok) throw new Error(cleanClickHouseError(text, response.status));
-  const summary = response.headers.get("x-clickhouse-summary");
-  return summary ? JSON.parse(summary) : { written_rows: null, written_bytes: bytes.byteLength };
+}
+
+async function rejectRedirect(response: Response) {
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel();
+    throw new Error("ClickHouse 地址不允许 HTTP 重定向，请填写最终服务地址");
+  }
+}
+
+async function withTarget<T>(
+  connection: ClickHouseConnection,
+  requestUrl: string,
+  timeoutMs: number,
+  timeoutMessage: string,
+  operation: (target: PreparedTarget, signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let dispatcher: Dispatcher | undefined;
+  try {
+    const target = await prepareTarget(connection, requestUrl, controller.signal);
+    dispatcher = target.dispatcher;
+    controller.signal.throwIfAborted();
+    return await abortable(operation(target, controller.signal), controller.signal);
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(timeoutMessage);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    // A timed-out request or a rejected redirect must not keep a socket alive.
+    await dispatcher?.destroy();
+  }
+}
+
+function abortable<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    pending.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+    if (signal.aborted) {
+      signal.removeEventListener("abort", abort);
+      abort();
+    }
+  });
+}
+
+async function prepareTarget(connection: ClickHouseConnection, requestUrl: string, signal: AbortSignal): Promise<PreparedTarget> {
+  signal.throwIfAborted();
+  const endpoint = validateConnection(connection, requestUrl);
+  if (privateTargetsAllowed(requestUrl)) return { endpoint };
+
+  let addresses: LookupAddress[];
+  try {
+    // lookup() itself cannot be cancelled. Stop awaiting it at the deadline,
+    // and never create a dispatcher or send a request if it finishes later.
+    addresses = await abortable(lookup(endpoint.hostname, { all: true, verbatim: true }), signal);
+  } catch {
+    signal.throwIfAborted();
+    throw new Error("无法解析 ClickHouse 地址");
+  }
+  signal.throwIfAborted();
+  if (!addresses.length) throw new Error("无法解析 ClickHouse 地址");
+  if (addresses.some(({ address }) => isPrivateTarget(address))) {
+    throw new Error("托管版本不能访问解析到本机或内网的地址");
+  }
+
+  return {
+    endpoint,
+    dispatcher: new Agent({ connect: { lookup: pinnedLookup(addresses) } }),
+  };
+}
+
+function pinnedLookup(addresses: LookupAddress[]): LookupFunction {
+  return (_hostname, options, callback) => {
+    const requestedFamily = options.family;
+    const candidates = requestedFamily
+      ? addresses.filter(({ family }) => family === requestedFamily)
+      : addresses;
+    if (!candidates.length) {
+      const error = new Error("没有可用的公网 ClickHouse 地址") as NodeJS.ErrnoException;
+      error.code = "ENOTFOUND";
+      callback(error, "", 0);
+      return;
+    }
+    if (options.all) callback(null, candidates);
+    else callback(null, candidates[0].address, candidates[0].family);
+  };
 }
 
 export function quoteIdentifier(value: string) {
@@ -126,19 +230,29 @@ export function assertReadOnly(sql: string) {
 }
 
 function isPrivateTarget(hostname: string) {
-  if (isLoopbackTarget(hostname) || hostname.endsWith(".localhost")) return true;
-  if (PRIVATE_IPV4.test(hostname)) return true;
-  if (hostname === "::" || hostname === "::1") return true;
-  if (/^(?:fc|fd|fe[89ab])/i.test(hostname)) return true;
-  if (hostname.startsWith("::ffff:")) {
-    return PRIVATE_IPV4.test(hostname.slice("::ffff:".length));
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (isLoopbackTarget(normalized) || normalized.endsWith(".localhost")) return true;
+  if (!ipaddr.isValid(normalized)) return false;
+
+  const address = ipaddr.parse(normalized);
+  if (address.kind() === "ipv6") {
+    const ipv6Address = address as ipaddr.IPv6;
+    if (ipv6Address.isIPv4MappedAddress()) {
+      return ipv6Address.toIPv4Address().range() !== "unicast";
+    }
   }
-  return false;
+  return address.range() !== "unicast";
 }
 
 function isLoopbackTarget(hostname: string) {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
   return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function privateTargetsAllowed(requestUrl: string) {
+  const requestHost = new URL(requestUrl).hostname;
+  const localDevelopment = process.env.NODE_ENV !== "production" && isLoopbackTarget(requestHost);
+  return localDevelopment || process.env.COLUMNPILOT_ALLOW_PRIVATE_TARGETS === "true";
 }
 
 function topLevelTokens(sql: string) {
