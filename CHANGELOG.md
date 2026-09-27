@@ -2,7 +2,7 @@
 
 All notable changes to ColumnPilot are documented in this file.
 
-## [0.4.2] - Unreleased
+## [0.4.2] - 2026-09-27
 
 ### Security
 
