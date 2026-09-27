@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LookupAddress } from "node:dns";
+import type { LookupFunction } from "node:net";
 
 const { lookupMock, agentConstructor } = vi.hoisted(() => ({
   lookupMock: vi.fn(async (): Promise<LookupAddress[]> => [{ address: "93.184.216.34", family: 4 }]),
@@ -58,6 +59,39 @@ afterEach(async () => {
 });
 
 describe.each(operations)("$name network boundaries", ({ name, timeoutMessage }) => {
+  it("pins subsequent socket lookups to both validated address families", async () => {
+    createAgent();
+    const addresses = [
+      { address: "93.184.216.34", family: 4 },
+      { address: "2001:4860:4860::8888", family: 6 },
+    ];
+    lookupMock.mockResolvedValueOnce(addresses).mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+    const fetchMock = vi.fn(async () => {
+      const { connect } = agentConstructor.mock.calls[0][0] as { connect: { lookup: LookupFunction } };
+      for (const family of [4, 6]) {
+        const callback = vi.fn();
+        connect.lookup("clickhouse.example", { family }, callback);
+        expect(callback).toHaveBeenCalledWith(null, addresses.find((address) => address.family === family)?.address, family);
+      }
+      const callback = vi.fn();
+      connect.lookup("clickhouse.example", { all: true }, callback);
+      expect(callback).toHaveBeenCalledWith(null, addresses);
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await run(name);
+    expect(lookupMock).toHaveBeenCalledOnce();
+  });
+
+  it("rejects mixed public/private DNS answers before dispatch", async () => {
+    lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }, { address: "::1", family: 6 }]);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(run(name)).rejects.toThrow(/解析到本机或内网/);
+    expect(agentConstructor).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it.each([301, 302, 307, 308].flatMap((status) => [
     { status, destination: "http://127.0.0.1:8123/capture" },
     { status, destination: "http://[::1]:8123/capture" },
@@ -172,4 +206,12 @@ describe.each(operations)("$name network boundaries", ({ name, timeoutMessage })
     expect(destroy).toHaveBeenCalledOnce();
     agent.assertNoPendingInterceptors();
   });
+});
+
+it("normalizes an IPv6 literal before address validation", async () => {
+  createAgent();
+  lookupMock.mockResolvedValue([{ address: "2001:4860:4860::8888", family: 6 }]);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+  await clickhouseQuery({ ...connection, endpoint: "https://[2001:4860:4860::8888]:8443" }, "SELECT 1", requestUrl);
+  expect(lookupMock).toHaveBeenCalledWith("2001:4860:4860::8888", { all: true, verbatim: true });
 });

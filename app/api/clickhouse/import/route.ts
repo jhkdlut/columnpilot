@@ -7,13 +7,15 @@ import {
 } from "@/lib/clickhouse/import-preview";
 import { clickhouseImport, clickhouseQuery, sqlString } from "@/lib/clickhouse/server";
 import type { ClickHouseConnection } from "@/lib/clickhouse/types";
+import { readBoundedFormData } from "@/lib/http/request-body";
+import { RequestError, requestErrorStatus } from "@/lib/http/errors";
 
 export async function POST(request: NextRequest) {
   try {
-    const form = await request.formData();
+    const form = await readBoundedFormData(request, MAX_IMPORT_BYTES);
     const file = form.get("file");
     if (!(file instanceof File)) throw new Error("请选择导入文件");
-    if (file.size > MAX_IMPORT_BYTES) throw new Error("当前版本单次上传最大 8 MB");
+    if (file.size > MAX_IMPORT_BYTES) throw new RequestError("当前版本单次上传最大 8 MB", 413);
 
     const connection = JSON.parse(String(form.get("connection") || "{}")) as ClickHouseConnection;
     const database = String(form.get("database") || connection.database || "default");
@@ -58,7 +60,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "导入失败" },
-      { status: 400 },
+      { status: requestErrorStatus(error) },
     );
   }
 }

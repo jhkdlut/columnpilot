@@ -15,6 +15,7 @@ ColumnPilot is a lightweight ClickHouse data console for browsing, querying, and
 - 查询结果导出为 CSV 或 JSON
 - 单次查询 30 秒超时、最多返回 500 行
 - 查询与导入写入请求的 30 秒限时包含 DNS 解析，超时主动取消请求
+- SQL 最大 64 KiB；请求体在解析前按字节限流，上传文件最大 8 MiB
 - 凭据仅随请求使用，应用不做持久化
 - 非 root、只读文件系统的生产 Docker 镜像
 - 完整 Docker Compose 部署、健康检查、本地 ClickHouse 与示例数据

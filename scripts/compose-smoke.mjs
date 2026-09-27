@@ -141,6 +141,33 @@ async function runCase(database) {
     assert.equal(ping.user, env.CLICKHOUSE_USER);
     await checkData(5);
 
+    // Verify the deployed routes reject input before expensive parsing or DB
+    // work, including a chunked upload with no declared Content-Length.
+    const expectTooLarge = async (route, options) => {
+      const response = await fetch(`${baseUrl}${route}`, {
+        ...options,
+        signal: AbortSignal.any([shutdown.signal, AbortSignal.timeout(45_000)]),
+      });
+      assert.equal(response.status, 413, await response.text());
+    };
+    for (const size of [64 * 1024 + 1, 256 * 1024 + 1]) {
+      await expectTooLarge("/api/clickhouse", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connection, action: "query", sql: " ".repeat(size) }),
+      });
+    }
+    await expectTooLarge("/api/clickhouse/import", {
+      method: "POST", duplex: "half",
+      headers: { "content-type": "multipart/form-data; boundary=oversized" },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(8 * 1024 * 1024));
+          controller.enqueue(new Uint8Array(64 * 1024 + 1));
+          controller.close();
+        },
+      }),
+    });
+
     const device = `smoke-${randomUUID()}`;
     const csv = `time,device_id,metric,value,unit\n2026-01-01 00:00:00.000,${device},smoke,123.5,test\n`;
     const form = new FormData();
@@ -166,7 +193,7 @@ async function runCase(database) {
     assert.equal((await jsonRequest(`${baseUrl}/api/health`)).status, "ok");
     await checkData(6);
     await checkImport();
-    console.log(`[compose smoke] ${database}: health, database, seed, CSV import, query, and restart checks passed`);
+    console.log(`[compose smoke] ${database}: health, database, seed, request limits, CSV import, query, and restart checks passed`);
   } catch (error) {
     failure = error;
     if (ownsProject) {

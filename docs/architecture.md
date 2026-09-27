@@ -27,9 +27,10 @@ flowchart LR
 - SQL submitted through the workbench is checked server-side and restricted to read-only statements.
 - The browser previews imports against the selected table schema, while the import API reloads that schema and validates the file again before writing.
 - Validated imports name their destination columns explicitly, so omitted ClickHouse columns continue to use their configured defaults.
-- Import writes are only exposed through the dedicated import route and upload size is limited on both sides of the API boundary.
+- Before JSON or multipart parsing, API routes count the incoming stream's bytes and stop at the configured cap. JSON bodies allow 256 KiB; multipart bodies allow 8 MiB plus 64 KiB for the boundary and metadata, while the file itself is limited to 8 MiB. SQL is limited to 64 KiB of UTF-8. Exceeding a size limit returns HTTP 413; stalled or aborted request-body reads return HTTP 408 after at most 30 seconds. Missing or understated Content-Length cannot bypass the limits.
 - Query-result CSV and JSON exports are generated locally in the browser from the current result set.
 - Credentials are sent to the application API for each request and are not persisted by ColumnPilot.
 - Production deployments reject private/local ClickHouse targets and require HTTPS unless the self-hosted operator explicitly enables `COLUMNPILOT_ALLOW_PRIVATE_TARGETS`. Local development can connect to `http://localhost:8123`.
 - Database permissions remain the final authority. Use a least-privilege ClickHouse account outside local development.
+- Hosted-mode endpoint checks, DNS pinning, redirect rejection, and the intentional trusted-self-hosted exception are documented in [the security review](security-review.md).
 - The production container drops Linux capabilities, uses a read-only root filesystem, and exposes a minimal health endpoint that does not include credentials or database details.
