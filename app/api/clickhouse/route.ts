@@ -6,6 +6,8 @@ import {
   sqlString,
 } from "@/lib/clickhouse/server";
 import type { ClickHouseConnection } from "@/lib/clickhouse/types";
+import { readBoundedJson } from "@/lib/http/request-body";
+import { requestErrorStatus } from "@/lib/http/errors";
 
 type RequestBody = {
   action: "ping" | "overview" | "tables" | "columns" | "preview" | "query";
@@ -17,7 +19,7 @@ type RequestBody = {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as RequestBody;
+    const body = (await readBoundedJson(request)) as RequestBody;
     const { connection, action } = body;
     let sql = "";
 
@@ -66,7 +68,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "ClickHouse 请求失败" },
-      { status: 400 },
+      { status: requestErrorStatus(error) },
     );
   }
 }

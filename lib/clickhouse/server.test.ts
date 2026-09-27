@@ -11,6 +11,7 @@ import {
   quoteIdentifier,
   sqlString,
   validateConnection,
+  MAX_SQL_BYTES,
 } from "./server";
 
 const connection = {
@@ -29,6 +30,9 @@ afterEach(() => {
 });
 
 describe("validateConnection", () => {
+  it.each(["https://user:pass@clickhouse.example", "https://user@clickhouse.example"])("rejects credentials embedded in the URL: %s", (endpoint) => {
+    expect(() => validateConnection({ ...connection, endpoint }, "https://columnpilot.example/api")).toThrow(/地址不能包含/);
+  });
   it("allows a local ClickHouse endpoint from local development", () => {
     expect(validateConnection(connection, "http://localhost:3000/api").hostname).toBe("localhost");
   });
@@ -70,6 +74,17 @@ describe("validateConnection", () => {
 });
 
 describe("SQL safety helpers", () => {
+  it("accepts exactly the byte limit and rejects oversized or non-string SQL", () => {
+    expect(() => assertReadOnly("SELECT 1".padEnd(MAX_SQL_BYTES))).not.toThrow();
+    expect(() => assertReadOnly("SELECT 1".padEnd(MAX_SQL_BYTES + 1))).toThrow(/64 KiB/);
+    expect(() => assertReadOnly(`SELECT '${"汉".repeat(MAX_SQL_BYTES / 2)}'`)).toThrow(/64 KiB/);
+    expect(() => assertReadOnly(123 as unknown as string)).toThrow(/必须是文本/);
+  });
+
+  it("rejects comments-only input without regex preprocessing", () => {
+    expect(() => assertReadOnly(`--${"*/--".repeat(10_000)}`)).toThrow(/请输入 SQL/);
+    expect(() => assertReadOnly("/* comment */ -- another")).toThrow(/请输入 SQL/);
+  });
   it.each([
     "SELECT 1",
     "-- comment\nSELECT ';' AS value;",
@@ -77,6 +92,7 @@ describe("SQL safety helpers", () => {
     "SHOW TABLES",
     "DESCRIBE TABLE columnpilot.sensor_readings",
     "EXPLAIN SELECT 1",
+    " /* first */ -- line\n /* second */ SELECT 1; -- trailing",
   ])("accepts a read-only statement: %s", (sql) => {
     expect(() => assertReadOnly(sql)).not.toThrow();
   });

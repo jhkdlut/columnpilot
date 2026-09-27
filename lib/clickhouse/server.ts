@@ -4,6 +4,9 @@ import type { LookupFunction } from "node:net";
 import ipaddr from "ipaddr.js";
 import { Agent, type Dispatcher } from "undici";
 import type { ClickHouseConnection } from "./types";
+import { RequestError } from "../http/errors";
+
+export const MAX_SQL_BYTES = 64 * 1024;
 
 type QueryOptions = {
   format?: string;
@@ -20,6 +23,7 @@ export function validateConnection(connection: ClickHouseConnection, requestUrl:
   if (!connection || typeof connection !== "object") throw new Error("缺少连接信息");
   const endpoint = new URL(connection.endpoint);
   if (!["http:", "https:"].includes(endpoint.protocol)) throw new Error("仅支持 HTTP 或 HTTPS 地址");
+  if (endpoint.username || endpoint.password) throw new Error("请在连接字段中填写凭据，地址不能包含用户名或密码");
 
   const allowPrivateTargets = privateTargetsAllowed(requestUrl);
   const targetHost = endpoint.hostname.toLowerCase().replace(/^\[|\]$/g, "");
@@ -170,7 +174,8 @@ async function prepareTarget(connection: ClickHouseConnection, requestUrl: strin
   try {
     // lookup() itself cannot be cancelled. Stop awaiting it at the deadline,
     // and never create a dispatcher or send a request if it finishes later.
-    addresses = await abortable(lookup(endpoint.hostname, { all: true, verbatim: true }), signal);
+    const hostname = endpoint.hostname.replace(/^\[|\]$/g, "");
+    addresses = await abortable(lookup(hostname, { all: true, verbatim: true }), signal);
   } catch {
     signal.throwIfAborted();
     throw new Error("无法解析 ClickHouse 地址");
@@ -214,9 +219,12 @@ export function sqlString(value: string) {
 }
 
 export function assertReadOnly(sql: string) {
-  const normalized = sql.replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/g, "").trim();
-  if (!normalized) throw new Error("请输入 SQL");
-  const tokens = topLevelTokens(normalized);
+  if (typeof sql !== "string") throw new RequestError("SQL 必须是文本", 400);
+  if (Buffer.byteLength(sql, "utf8") > MAX_SQL_BYTES) throw new RequestError("SQL 最大 64 KiB", 413);
+  // The tokenizer already skips comments in a single pass; no unbounded
+  // regular-expression preprocessing is needed for attacker-controlled SQL.
+  const tokens = topLevelTokens(sql);
+  if (!tokens.length) throw new Error("请输入 SQL");
   const keyword = tokens[0];
   const effectiveKeyword = keyword === "WITH"
     ? tokens.find((token) => ["SELECT", "INSERT", "UPDATE", "DELETE", "ALTER", "CREATE", "DROP", "TRUNCATE"].includes(token))

@@ -2,6 +2,21 @@
 
 All notable changes to ColumnPilot are documented in this file.
 
+## [0.4.2] - 2026-09-27
+
+### Security
+
+- Limit inbound JSON and multipart streams before parsing; reject oversized requests, files and SQL with HTTP 413, and stop stalled or aborted uploads.
+- Replace regex SQL-comment preprocessing with the existing single-pass tokenizer and cap SQL at 64 KiB.
+- Reject endpoint URL credentials and normalize IPv6 literals before DNS validation; extend DNS-pinning and request-boundary regression coverage.
+- Document hosted and trusted-self-hosted endpoint policies and the interpretation of static-analysis findings.
+
+### Maintenance
+
+- Update compatible application, styling, types and GitHub Actions dependencies while retaining Node 22, ESLint 9 and TypeScript 5.
+- Group related framework packages in Dependabot and defer incompatible toolchain major updates.
+- Align the application, lockfile, Compose image and environment template at 0.4.2.
+
 ## [0.4.1] - 2026-09-24
 
 ### Fixed

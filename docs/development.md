@@ -46,6 +46,8 @@ The smoke check runs default and custom database configurations with unique Comp
 
 In this project's managed local workflow, run validation commands through the `agent` Conda environment, for example `conda run -n agent --no-capture-output npm test` and `conda run -n agent --no-capture-output npm run test:compose`.
 
+The production Docker image, CI runtime, and `@types/node` target Node 22 together. Keep ESLint on 9 and TypeScript on 5 until their plugins support a reviewed major upgrade. Dependabot groups Next.js/React and their lint/types packages together; major upgrades for this toolchain require explicit review. Tests with real API request bodies cover streamed overflow, HTTP 413, cancellation and multipart import behavior in addition to the Docker acceptance suite.
+
 ## Production notes
 
 The Compose file can build and run the complete production stack. See [Docker deployment](deployment.md) for startup, operations, health checks, and network guidance.
