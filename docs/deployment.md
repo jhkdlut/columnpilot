@@ -36,7 +36,7 @@ On an empty data volume, `infra/clickhouse/initdb/00-initialize.sh` runs the SQL
 
 ## Upgrade an existing deployment
 
-Keep the existing `.env` and database volumes. Compare `.env` with `.env.example` before upgrading, and update `COLUMNPILOT_IMAGE` to `columnpilot:0.4.1` when building this version locally. An explicit value in `.env` overrides the Compose default, so an old `columnpilot:0.4.0` value would label the new build incorrectly. Confirm the resolved image with `docker compose config --images`.
+Keep the existing `.env` and database volumes. Compare `.env` with `.env.example` before upgrading, and update `COLUMNPILOT_IMAGE` to `columnpilot:0.4.2` when building this version locally. An explicit value in `.env` overrides the Compose default, so an old image value would label the new build incorrectly. Confirm the resolved image with `docker compose config --images`.
 
 Older versions could create the example tables in `default` while leaving `columnpilot` empty. This fix applies to fresh volumes and does not move or overwrite existing tables. To keep using those tables, select `default` in the connection dialog. If moving them to another database is required, back up the data and plan an explicit migration after checking for destination-name conflicts. Changing `CLICKHOUSE_DB` alone does not migrate existing data. Do not delete volumes or force initialization to repair an existing deployment.
 
@@ -45,17 +45,17 @@ Older versions could create the example tables in `default` while leaving `colum
 Use a separate terminal for these session-local overrides. Select unused ports, build an independently tagged image, and use the same project name on every command:
 
 ```powershell
-$env:COLUMNPILOT_IMAGE = "columnpilot:0.4.1"
+$env:COLUMNPILOT_IMAGE = "columnpilot:0.4.2"
 $env:COLUMNPILOT_PORT = "3014"
 $env:CLICKHOUSE_HTTP_PORT = "18124"
 $env:CLICKHOUSE_NATIVE_PORT = "19104"
-docker compose -p columnpilot-v041 up -d --build
-docker compose -p columnpilot-v041 ps
-docker compose -p columnpilot-v041 logs -f columnpilot clickhouse
-docker compose -p columnpilot-v041 down
+docker compose -p columnpilot-v042 up -d --build
+docker compose -p columnpilot-v042 ps
+docker compose -p columnpilot-v042 logs -f columnpilot clickhouse
+docker compose -p columnpilot-v042 down
 ```
 
-The console is available at `http://localhost:3014`. Its server still connects to `http://clickhouse:8123` inside this project's network. The `columnpilot-v041` project has its own named volumes; the final command stops that project and keeps its data. Close the terminal to discard the environment overrides.
+The console is available at `http://localhost:3014`. Its server still connects to `http://clickhouse:8123` inside this project's network. The `columnpilot-v042` project has its own named volumes; the final command stops that project and keeps its data. Close the terminal to discard the environment overrides.
 
 ## Operations
 
@@ -79,12 +79,14 @@ ClickHouse ports remain bound to `127.0.0.1`. Do not expose port 8123 or 9000 di
 
 Compose sets `COLUMNPILOT_ALLOW_PRIVATE_TARGETS=true` for the web container because it must reach the private `clickhouse` service. This stack is intended for a trusted, single-operator deployment and must not be used as a public multi-tenant proxy.
 
+The application caps JSON requests at 256 KiB and SQL at 64 KiB. Imports accept files up to 8 MiB, within a total multipart envelope of 8 MiB + 64 KiB. These limits are enforced while reading, before parsing, including requests without Content-Length; oversize requests receive HTTP 413. Request-body reads have a 30-second deadline and return HTTP 408 when stalled. Configure equivalent or stricter body and timeout limits at your authenticated reverse proxy to reject unwanted traffic before it reaches the application. The outbound ClickHouse request has its own deadline.
+
 ## Use a prebuilt image
 
 Set `COLUMNPILOT_IMAGE` to an image published by your own registry. Compose retains the local `build` definition, so use `--no-build` to start exactly that image:
 
 ```powershell
-$env:COLUMNPILOT_IMAGE = "ghcr.io/your-account/columnpilot:0.4.1"
+$env:COLUMNPILOT_IMAGE = "ghcr.io/your-account/columnpilot:0.4.2"
 docker compose pull columnpilot
 docker compose up -d --no-build
 ```

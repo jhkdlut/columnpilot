@@ -9,7 +9,18 @@ updates:
       time: "09:00"
       timezone: Asia/Hong_Kong
     open-pull-requests-limit: 5
+    # Keep the validated toolchain until plugin support is reviewed explicitly.
+    ignore:
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
+      framework:
+        patterns: ["next", "eslint-config-next", "react", "react-dom", "@types/react", "@types/react-dom"]
+        update-types: [minor, patch]
       production-dependencies:
         dependency-type: production
         update-types:
@@ -27,6 +38,10 @@ updates:
 
   - package-ecosystem: docker
     directory: /
+    # Docker, CI and @types/node stay on Node 22 together.
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
     schedule:
       interval: weekly
       day: monday
