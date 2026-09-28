@@ -4,9 +4,12 @@
 
 ColumnPilot is a lightweight ClickHouse data console for browsing, querying, and importing data.
 
+v0.5.0 adds a read-only intelligent-query workspace: select a table, ask a question, inspect the SQL, then execute it against ClickHouse. The provider-neutral interface and deterministic simulation are available; real model/provider acceptance is still pending. See [intelligent queries](docs/ai-workspace.md) for the supported scope and setup.
+
 ## Features
 
 - ClickHouse 连接测试与实例概览
+- 智能问数：库表选择、结构化只读方案、执行预览、会话追问与可选结果解释（模拟联调可用，真实模型待接入验收）
 - 数据表、字段和数据预览
 - 服务端强制只读的 SQL 工作台
 - 当前会话内最近 20 条成功 SQL 查询历史

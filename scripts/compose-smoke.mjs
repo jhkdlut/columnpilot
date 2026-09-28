@@ -92,6 +92,12 @@ async function runCase(database) {
     COLUMNPILOT_BIND_ADDRESS: "127.0.0.1",
     COLUMNPILOT_PORT: "0",
     COLUMNPILOT_ALLOW_PRIVATE_TARGETS: "true",
+    COLUMNPILOT_AI_MODE: "mock",
+    COLUMNPILOT_AI_ENDPOINT: "",
+    COLUMNPILOT_AI_MODEL: "",
+    COLUMNPILOT_AI_API_KEY: "",
+    COLUMNPILOT_AI_ALLOW_HTTP: "false",
+    COLUMNPILOT_AI_SIGNING_KEY: "smoke-test-only-signing-key-not-for-production",
     CLICKHOUSE_DB: database,
     CLICKHOUSE_USER: "columnpilot_smoke",
     CLICKHOUSE_PASSWORD: "smoke_test_only_not_a_secret",
@@ -140,6 +146,53 @@ async function runCase(database) {
     assert.equal(ping.database, database);
     assert.equal(ping.user, env.CLICKHOUSE_USER);
     await checkData(5);
+
+    const ai = async (body) => (await jsonRequest(`${baseUrl}/api/ai`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connection, ...body }),
+    })).result;
+    assert.equal((await jsonRequest(`${baseUrl}/api/ai`)).result.mode, "mock");
+    assert.ok((await ai({ action: "databases" })).items.some((item) => item.name === database));
+    assert.ok((await ai({ action: "tables" })).items.some((item) => item.name === "sensor_readings"));
+    const schema = await ai({ action: "schema", table: "sensor_readings" });
+    assert.equal(schema.database, database);
+    const plan = async (question, history = []) => {
+      const result = await ai({ action: "plan", table: "sensor_readings", question, history });
+      assert.equal(result.kind, "plan", JSON.stringify(result));
+      return result;
+    };
+    const countPlan = await plan("统计记录总数");
+    const counted = await ai({ action: "execute", ticket: countPlan.ticket });
+    assert.equal(Number(counted.result.data[0].metric_1), 5);
+    assert.equal(counted.truncated, false);
+    assert.match((await ai({ action: "explain", ticket: counted.explanationTicket, consent: true })).text, /模拟解释/);
+    const groupPlan = await plan("最近 7 天按 device_id 统计 value 的平均值");
+    const grouped = await ai({ action: "execute", ticket: groupPlan.ticket });
+    const expectedGroups = await query("SELECT device_id, avg(value) AS metric_1 FROM sensor_readings WHERE time >= now() - INTERVAL 7 DAY GROUP BY device_id ORDER BY metric_1 DESC");
+    assert.deepEqual(grouped.result.data, expectedGroups, "AI aggregate must match reference SQL");
+    const followUp = await plan("改为最近 30 天", [{ question: "最近 7 天按 device_id 统计 value 的平均值", plan: groupPlan.plan }]);
+    assert.equal(Date.parse(followUp.parameters.ai_1) - Date.parse(followUp.parameters.ai_0), 30 * 86_400_000);
+    assert.deepEqual((await ai({ action: "execute", ticket: followUp.ticket })).result.data, expectedGroups);
+    const filtered = await plan("筛选 value >= 100");
+    assert.deepEqual((await ai({ action: "execute", ticket: filtered.ticket })).result.data.map((row) => row.value).sort((a, b) => a - b), [148.72, 2184]);
+    const literal = await plan("筛选 device_id = x' OR 1=1 --");
+    assert.deepEqual((await ai({ action: "execute", ticket: literal.ticket })).result.data, []);
+    const top = await plan("value 最大的 2 条记录");
+    const topResult = await ai({ action: "execute", ticket: top.ticket });
+    assert.deepEqual(topResult.result.data.map((row) => row.value), [2184, 148.72]);
+    assert.equal(topResult.truncated, true);
+    assert.equal((await ai({ action: "plan", table: "sensor_readings", question: "删除所有数据" })).kind, "clarification");
+    for (const body of [
+      { action: "explain", ticket: counted.explanationTicket },
+      { action: "execute", ticket: `tampered${countPlan.ticket}` },
+      { action: "execute", sql: "DELETE FROM sensor_readings" },
+      { action: "execute", ticket: countPlan.ticket, connection: { ...connection, database: "default" } },
+    ]) {
+      const response = await fetch(`${baseUrl}/api/ai`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ connection, ...body }), signal: AbortSignal.timeout(45_000) });
+      assert.ok([400, 409].includes(response.status), await response.text());
+    }
+    await checkData(5);
+    console.log(`[compose smoke] ${database}: mock planning, real aggregates/filters, follow-ups, receipts, consent and truncation passed`);
 
     // Verify the deployed routes reject input before expensive parsing or DB
     // work, including a chunked upload with no declared Content-Length.
@@ -194,6 +247,14 @@ async function runCase(database) {
     await checkData(6);
     await checkImport();
     console.log(`[compose smoke] ${database}: health, database, seed, request limits, CSV import, query, and restart checks passed`);
+    const inspectMs = Number(process.env.COLUMNPILOT_SMOKE_INSPECT_MS || 0);
+    if (database === "columnpilot" && Number.isInteger(inspectMs) && inspectMs > 0 && inspectMs <= 600_000) {
+      console.log(`[compose smoke] UI inspection: ${baseUrl}; endpoint http://clickhouse:8123; user ${env.CLICKHOUSE_USER}; database ${database}; temporary password ${env.CLICKHOUSE_PASSWORD}`);
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, inspectMs);
+        shutdown.signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+      });
+    }
   } catch (error) {
     failure = error;
     if (ownsProject) {

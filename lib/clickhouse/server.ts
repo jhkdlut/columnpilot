@@ -5,6 +5,7 @@ import ipaddr from "ipaddr.js";
 import { Agent, type Dispatcher } from "undici";
 import type { ClickHouseConnection } from "./types";
 import { RequestError } from "../http/errors";
+import { readResponseText } from "../http/response-body";
 
 export const MAX_SQL_BYTES = 64 * 1024;
 
@@ -12,6 +13,8 @@ type QueryOptions = {
   format?: string;
   timeoutMs?: number;
   maxRows?: number;
+  parameters?: Record<string, string>;
+  maxResponseBytes?: number;
 };
 
 type PreparedTarget = {
@@ -49,6 +52,14 @@ export async function clickhouseQuery(
     endpoint.searchParams.set("result_overflow_mode", "break");
     endpoint.searchParams.set("wait_end_of_query", "1");
     endpoint.searchParams.set("readonly", "1");
+    for (const [name, value] of Object.entries(options.parameters ?? {})) {
+      if (!/^ai_\d+$/.test(name)) throw new Error("查询参数名称无效");
+      endpoint.searchParams.set(`param_${name}`, value);
+    }
+    if (options.maxResponseBytes) {
+      endpoint.searchParams.set("result_overflow_mode", "throw");
+      endpoint.searchParams.set("max_result_bytes", String(options.maxResponseBytes));
+    }
 
     const response = await fetch(endpoint, {
       method: "POST",
@@ -65,7 +76,7 @@ export async function clickhouseQuery(
       redirect: "manual",
     } as RequestInit & { dispatcher?: Dispatcher });
     await rejectRedirect(response);
-    const text = await response.text();
+    const text = options.maxResponseBytes ? await readResponseText(response, options.maxResponseBytes) : await response.text();
     if (!response.ok) throw new Error(cleanClickHouseError(text, response.status));
     if ((options.format ?? "JSON") === "JSON") {
       return text ? JSON.parse(text) : { meta: [], data: [], rows: 0 };
