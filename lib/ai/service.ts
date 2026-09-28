@@ -27,13 +27,13 @@ export async function planQuestion(connection: ClickHouseConnection, table: stri
   if (response.kind === "clarification") return { kind: "clarification", message: text(response.message, 2000) };
   if (response.kind !== "plan") throw new RequestError("模型未返回有效查询方案", 502);
   const compiled = compilePlan(response.plan, schema, new Date(input.now));
-  const receipt = signTicket("plan", connection, { plan: compiled.plan, fingerprint: schemaFingerprint(schema), question: prompt } satisfies SavedPlan);
+  const receipt = await signTicket("plan", connection, { plan: compiled.plan, fingerprint: schemaFingerprint(schema), question: prompt } satisfies SavedPlan);
   return { kind: "plan", ...compiled, ...receipt, timezone: "UTC" };
 }
 
 export async function executePlan(connection: ClickHouseConnection, ticket: unknown, requestUrl: string): Promise<AiExecution> {
   requireProvider();
-  const saved = verifyTicket<SavedPlan>(ticket, "plan", connection);
+  const saved = await verifyTicket<SavedPlan>(ticket, "plan", connection);
   const schema = await loadSchema(connection, saved.plan.table, requestUrl);
   if (schemaFingerprint(schema) !== saved.fingerprint) throw new RequestError("表结构已变化，请重新生成查询方案", 409);
   const compiled = compilePlan(saved.plan, schema);
@@ -47,7 +47,7 @@ export async function executePlan(connection: ClickHouseConnection, ticket: unkn
   }
   sample.sampleTruncated = sample.rows.length < result.data.length;
   if (Buffer.byteLength(JSON.stringify(sample)) > 64 * 1024) throw new RequestError("结果描述超过解释大小限制", 413);
-  const receipt = signTicket("result", connection, sample);
+  const receipt = await signTicket("result", connection, sample);
   return {
     result, truncated,
     summary: result.data.length ? `已执行查询，返回 ${result.data.length} 行。${truncated ? "结果达到上限，仍有更多数据，请缩小范围。" : "结果以本次查询条件为准。"}` : "查询成功，当前条件下没有数据。",
@@ -57,7 +57,7 @@ export async function executePlan(connection: ClickHouseConnection, ticket: unkn
 
 export async function explainResult(connection: ClickHouseConnection, ticket: unknown, consent: unknown) {
   if (consent !== true) throw new RequestError("解释结果前需要确认发送限量查询数据", 400);
-  const sample = verifyTicket<ResultSample>(ticket, "result", connection);
+  const sample = await verifyTicket<ResultSample>(ticket, "result", connection);
   if (sample.rows.length > 20 || Buffer.byteLength(JSON.stringify(sample)) > 64 * 1024) throw new RequestError("结果样本超过限制", 413);
   return { text: text(await requireProvider().explain(sample), 8000) };
 }

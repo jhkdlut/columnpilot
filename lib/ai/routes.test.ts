@@ -100,7 +100,7 @@ describe("AI route boundaries", () => {
     const planned = await preview("查看前 100 条记录");
     data = Array.from({ length: 100 }, () => ({ device_id: "a".repeat(8000), value: 1 }));
     const executed = (await post({ action: "execute", ticket: planned.ticket })).body.result;
-    const sample = verifyTicket<ResultSample>(executed.explanationTicket, "result", connection);
+    const sample = await verifyTicket<ResultSample>(executed.explanationTicket, "result", connection);
     expect(sample.rows.length).toBeLessThanOrEqual(20);
     expect(Buffer.byteLength(JSON.stringify(sample))).toBeLessThanOrEqual(64 * 1024);
     expect(sample.sampleTruncated).toBe(true);
