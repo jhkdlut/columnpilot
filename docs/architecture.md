@@ -17,12 +17,15 @@ flowchart LR
 - `app/`: application entry points and API routes.
 - `components/`: ColumnPilot UI and the small set of reusable UI primitives it uses.
 - `lib/clickhouse/`: connection validation, query execution, imports, and shared types.
+- `lib/ai/`: provider contract, mock/HTTP adapters, structured plans, metadata checks and signed execution receipts.
 - `infra/clickhouse/`: Docker initialization SQL.
 - `docs/`: architecture and development notes.
 - `Dockerfile`: multi-stage production build running as an unprivileged user.
 - `compose.yaml`: complete web and ClickHouse deployment with health checks.
 
 ## Security boundaries
+
+The intelligent-query path uses `/api/ai` to load authorized metadata, call the configured planning adapter, validate a structured plan and return a signed SQL preview. Execution revalidates the connection and schema before recompiling that plan. The model never receives database credentials or an unrestricted execution tool. Explanation requests require explicit consent and use a signed, bounded sample from an actual result. See [intelligent queries](ai-workspace.md) for the contract, supported scope and pending real-model acceptance.
 
 - SQL submitted through the workbench is checked server-side and restricted to read-only statements.
 - The browser previews imports against the selected table schema, while the import API reloads that schema and validates the file again before writing.
