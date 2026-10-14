@@ -7,7 +7,8 @@ import { identifier } from "./plan";
 import { object, text } from "./validation";
 
 export const RESULT_BYTES = 2 * 1024 * 1024;
-const engines = new Set(["MergeTree", "ReplacingMergeTree", "SummingMergeTree", "AggregatingMergeTree", "CollapsingMergeTree", "VersionedCollapsingMergeTree", "ReplicatedMergeTree", "ReplicatedReplacingMergeTree", "Memory", "Log", "TinyLog", "StripeLog"]);
+const supportedEngines = ["MergeTree", "ReplacingMergeTree", "SummingMergeTree", "AggregatingMergeTree", "CollapsingMergeTree", "VersionedCollapsingMergeTree", "ReplicatedMergeTree", "ReplicatedReplacingMergeTree", "Memory", "Log", "TinyLog", "StripeLog"];
+const engines = new Set(supportedEngines);
 
 export function readConnection(value: unknown): ClickHouseConnection {
   const raw = object(value, ["endpoint", "user", "password", "database"]);
@@ -22,9 +23,12 @@ export async function aiQuery(connection: ClickHouseConnection, sql: string, req
 }
 
 export async function catalog(connection: ClickHouseConnection, requestUrl: string, action: "databases" | "tables") {
+  if (action === "tables" && ["system", "INFORMATION_SCHEMA", "information_schema"].includes(connection.database)) {
+    return { items: [], truncated: false };
+  }
   const sql = action === "databases"
     ? "SELECT name FROM system.databases WHERE name NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema') ORDER BY name LIMIT 101"
-    : `SELECT name, engine FROM system.tables WHERE database = ${sqlString(connection.database)} ORDER BY name LIMIT 501`;
+    : `SELECT name, engine FROM system.tables WHERE database = ${sqlString(connection.database)} AND engine IN (${supportedEngines.map(sqlString).join(", ")}) ORDER BY name LIMIT 501`;
   const result = await aiQuery(connection, sql, requestUrl);
   const limit = action === "databases" ? 100 : 500;
   return { items: result.data.slice(0, limit), truncated: result.data.length > limit };

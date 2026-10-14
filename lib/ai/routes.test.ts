@@ -44,6 +44,23 @@ describe("AI route boundaries", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.text()).not.toContain("secret");
   });
+  it("lists only supported table engines before choosing the first table", async () => {
+    query.mockImplementation(async (_connection, sql: string) => {
+      expect(sql).toContain("AND engine IN (");
+      expect(sql).toContain("'MergeTree'");
+      expect(sql).not.toContain("'View'");
+      return { data: [{ name: "readings", engine: "MergeTree" }] };
+    });
+    const response = await post({ action: "tables" });
+    expect(response.status).toBe(200);
+    expect(response.body.result.items).toEqual([{ name: "readings", engine: "MergeTree" }]);
+  });
+  it("shows no available tables for a system database", async () => {
+    const response = await post({ action: "tables", connection: { ...connection, database: "system" } });
+    expect(response.status).toBe(200);
+    expect(response.body.result).toEqual({ items: [], truncated: false });
+    expect(query).not.toHaveBeenCalled();
+  });
   it("generates then executes only on request, sharing no result rows during planning", async () => {
     const planned = await preview();
     expect(query.mock.calls.every((call) => /system\.|LIMIT 0/.test(call[1]))).toBe(true);

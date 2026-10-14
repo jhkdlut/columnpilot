@@ -153,7 +153,11 @@ async function runCase(database) {
     })).result;
     assert.equal((await jsonRequest(`${baseUrl}/api/ai`)).result.mode, "mock");
     assert.ok((await ai({ action: "databases" })).items.some((item) => item.name === database));
-    assert.ok((await ai({ action: "tables" })).items.some((item) => item.name === "sensor_readings"));
+    await compose(["exec", "-T", "clickhouse", "clickhouse-client", "--user", env.CLICKHOUSE_USER, "--password", env.CLICKHOUSE_PASSWORD, "--database", database, "--query", "CREATE VIEW aaa_unsupported_view AS SELECT * FROM sensor_readings"]);
+    const aiTables = (await ai({ action: "tables" })).items;
+    assert.equal(aiTables[0]?.name, "device_events", "The first selectable table must use a supported engine");
+    assert.ok(aiTables.some((item) => item.name === "sensor_readings"));
+    assert.ok(!aiTables.some((item) => item.name === "aaa_unsupported_view"));
     const schema = await ai({ action: "schema", table: "sensor_readings" });
     assert.equal(schema.database, database);
     const plan = async (question, history = []) => {

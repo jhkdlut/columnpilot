@@ -17,6 +17,15 @@ All notable changes to ColumnPilot are documented in this file.
 - Only supported local table engines and authorized metadata enter the planning context. Model output cannot supply executable SQL or provider endpoints.
 - AI requests retain read-only execution and network policies, cap query responses at 2 MiB, and limit shared explanation samples to 20 rows / 64 KiB.
 - AI is disabled by default; mock mode is visibly labeled and does not call a model service.
+- Use the matching undici fetch and dispatcher APIs for DNS-pinned ClickHouse requests and imports.
+
+### Fixed
+
+- Hide unsupported table engines from the intelligent-query picker before its initial selection.
+
+### Maintenance
+
+- Update Next.js, its ESLint config, Vitest, undici and patched transitive dependencies; require Node.js 22.19 or newer.
 
 ## [0.4.2] - 2026-09-27
 
