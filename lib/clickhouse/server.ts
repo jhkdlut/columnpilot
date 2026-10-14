@@ -2,9 +2,10 @@ import { lookup } from "node:dns/promises";
 import type { LookupAddress } from "node:dns";
 import type { LookupFunction } from "node:net";
 import ipaddr from "ipaddr.js";
-import { Agent, type Dispatcher } from "undici";
+import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import type { ClickHouseConnection } from "./types";
 import { RequestError } from "../http/errors";
+import { readResponseText } from "../http/response-body";
 
 export const MAX_SQL_BYTES = 64 * 1024;
 
@@ -12,6 +13,8 @@ type QueryOptions = {
   format?: string;
   timeoutMs?: number;
   maxRows?: number;
+  parameters?: Record<string, string>;
+  maxResponseBytes?: number;
 };
 
 type PreparedTarget = {
@@ -49,8 +52,16 @@ export async function clickhouseQuery(
     endpoint.searchParams.set("result_overflow_mode", "break");
     endpoint.searchParams.set("wait_end_of_query", "1");
     endpoint.searchParams.set("readonly", "1");
+    for (const [name, value] of Object.entries(options.parameters ?? {})) {
+      if (!/^ai_\d+$/.test(name)) throw new Error("查询参数名称无效");
+      endpoint.searchParams.set(`param_${name}`, value);
+    }
+    if (options.maxResponseBytes) {
+      endpoint.searchParams.set("result_overflow_mode", "throw");
+      endpoint.searchParams.set("max_result_bytes", String(options.maxResponseBytes));
+    }
 
-    const response = await fetch(endpoint, {
+    const response = await undiciFetch(endpoint, {
       method: "POST",
       headers: {
         "content-type": "text/plain; charset=utf-8",
@@ -63,9 +74,9 @@ export async function clickhouseQuery(
       dispatcher,
       signal,
       redirect: "manual",
-    } as RequestInit & { dispatcher?: Dispatcher });
+    });
     await rejectRedirect(response);
-    const text = await response.text();
+    const text = options.maxResponseBytes ? await readResponseText(response, options.maxResponseBytes) : await response.text();
     if (!response.ok) throw new Error(cleanClickHouseError(text, response.status));
     if ((options.format ?? "JSON") === "JSON") {
       return text ? JSON.parse(text) : { meta: [], data: [], rows: 0 };
@@ -91,7 +102,7 @@ export async function clickhouseImport(
     endpoint.searchParams.set("query", `INSERT INTO ${target} (${columnList}) FORMAT ${format}`);
     endpoint.searchParams.set("max_execution_time", String(Math.ceil((options.timeoutMs ?? 30_000) / 1000)));
     endpoint.searchParams.set("wait_end_of_query", "1");
-    const response = await fetch(endpoint, {
+    const response = await undiciFetch(endpoint, {
       method: "POST",
       headers: {
         "content-type": "application/octet-stream",
@@ -103,7 +114,7 @@ export async function clickhouseImport(
       dispatcher,
       signal,
       redirect: "manual",
-    } as RequestInit & { dispatcher?: Dispatcher });
+    });
     await rejectRedirect(response);
     const text = await response.text();
     if (!response.ok) throw new Error(cleanClickHouseError(text, response.status));
@@ -112,7 +123,7 @@ export async function clickhouseImport(
   });
 }
 
-async function rejectRedirect(response: Response) {
+async function rejectRedirect(response: Awaited<ReturnType<typeof undiciFetch>>) {
   if (response.status >= 300 && response.status < 400) {
     await response.body?.cancel();
     throw new Error("ClickHouse 地址不允许 HTTP 重定向，请填写最终服务地址");

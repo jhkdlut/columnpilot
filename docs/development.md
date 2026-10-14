@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Docker Desktop or another Docker Engine with Compose v2
-- Node.js 22.13 or newer
+- Node.js 22.19 or newer
 - npm
 
 ## Local workflow
@@ -47,6 +47,12 @@ The smoke check runs default and custom database configurations with unique Comp
 In this project's managed local workflow, run validation commands through the `agent` Conda environment, for example `conda run -n agent --no-capture-output npm test` and `conda run -n agent --no-capture-output npm run test:compose`.
 
 The production Docker image, CI runtime, and `@types/node` target Node 22 together. Keep ESLint on 9 and TypeScript on 5 until their plugins support a reviewed major upgrade. Dependabot groups Next.js/React and their lint/types packages together; major upgrades for this toolchain require explicit review. Tests with real API request bodies cover streamed overflow, HTTP 413, cancellation and multipart import behavior in addition to the Docker acceptance suite.
+
+## Intelligent-query development
+
+See [the workspace and provider contract](ai-workspace.md) for supported plans, mock prompts, configuration and the pending real-model acceptance checklist. Tests use deterministic providers and a local HTTP fixture; no provider credentials are required.
+
+Compose acceptance enables mock mode against isolated real ClickHouse databases. It compares aggregates and filters to reference results, checks follow-ups, receipt validation, consent and truncation, then re-runs the existing import/restart checks. For a browser inspection, set `COLUMNPILOT_SMOKE_INSPECT_MS` to a duration up to 600000 before running the smoke script; it prints the first temporary stack's loopback URL and test credentials, waits that duration, then performs its normal cleanup and second database case. Leave this unset in CI.
 
 ## Production notes
 

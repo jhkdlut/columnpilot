@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import {
   Activity,
+  Bot,
   ArrowRight,
   Braces,
   ChevronDown,
@@ -25,6 +26,7 @@ import { DEMO_COLUMNS, DEMO_RESULT, DEMO_TABLES, DEFAULT_SQL } from "@/component
 import { ImportPanel } from "@/components/columnpilot/import-panel";
 import { QueryEditor, SqlWorkspace } from "@/components/columnpilot/query-workspace";
 import { ResultTable } from "@/components/columnpilot/result-table";
+import { AiWorkspace } from "@/components/columnpilot/ai-workspace";
 import type { ColumnInfo, ImportJob, TableInfo, View } from "@/components/columnpilot/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,6 +67,7 @@ export function ColumnPilotApp() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [draft, setDraft] = useState<Connection>({ endpoint: "http://localhost:8123", user: "columnpilot", password: "", database: "columnpilot" });
   const [connection, setConnection] = useState<Connection | null>(null);
+  const [connectionRevision, setConnectionRevision] = useState(0);
   const [connecting, setConnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [overview, setOverview] = useState({ databases: 8, tables: 146, total_rows: 191_287_400, total_bytes: 25_195_800_000, version: "26.8.1", uptime: 2_641_824 });
@@ -123,6 +126,7 @@ export function ColumnPilotApp() {
     try {
       await callApi({ action: "ping" }, draft);
       setConnection(draft);
+      setConnectionRevision((value) => value + 1);
       setJobs([]);
       setDialogOpen(false);
       await loadCluster(draft);
@@ -345,6 +349,7 @@ export function ColumnPilotApp() {
             {view === "explorer" && <Explorer tables={filteredTables} selected={selectedTable} preview={preview} columns={columns} loading={tableLoading} tab={explorerTab} setTab={setExplorerTab} onTable={chooseTable} />}
             {view === "sql" && <SqlWorkspace sql={sql} setSql={setSql} result={queryResult} querying={querying} runQuery={runQuery} connected={!!connection} database={connection?.database ?? "demo"} history={queryHistory} loadHistory={(historySql) => { setSql(historySql); toast.success("已载入历史查询，尚未执行"); }} clearHistory={() => setQueryHistory([])} />}
             {view === "imports" && <ImportPanel connected={!!connection} file={importFile} setFile={selectImportFile} database={connection?.database ?? "default"} tables={connection ? tables : []} table={importTable} setTable={selectImportTable} format={importFormat} setFormat={selectImportFormat} preview={importPreview} previewing={importPreviewing} importing={importing} progress={importProgress} jobs={jobs} startImport={startImport} />}
+            <div hidden={view !== "ai"}><AiWorkspace key={connectionRevision} connection={connection} openSql={(value) => { setSql(value); setView("sql"); }} /></div>
           </div>
         </section>
       </div>
@@ -356,6 +361,7 @@ const NAV_ITEMS: Array<{ view: View; icon: typeof Activity; label: string; badge
   { view: "overview", icon: Activity, label: "概览" },
   { view: "explorer", icon: Table2, label: "数据浏览" },
   { view: "sql", icon: TerminalSquare, label: "SQL 工作台" },
+  { view: "ai", icon: Bot, label: "智能问数" },
   { view: "imports", icon: FileUp, label: "导入任务" },
 ];
 
@@ -364,7 +370,7 @@ function ConnectionDialog({ open, onOpenChange, draft, setDraft, connecting, onT
 }
 
 function PageHeader({ view, clusterName, version, search, setSearch, refreshing, connected, onRefresh }: { view: View; clusterName: string; version: string; search: string; setSearch: (value: string) => void; refreshing: boolean; connected: boolean; onRefresh: () => void }) {
-  const titles = { overview: ["数据概览", "查看集群规模、热门数据表和实时样本"], explorer: ["数据浏览", "检查表结构并预览最多 100 行数据"], sql: ["SQL 工作台", "在安全的只读模式下分析 ClickHouse 数据"], imports: ["导入任务", "将 CSV 或 JSONEachRow 文件写入现有数据表"] };
+  const titles = { overview: ["数据概览", "查看集群规模、热门数据表和实时样本"], explorer: ["数据浏览", "检查表结构并预览最多 100 行数据"], sql: ["SQL 工作台", "在安全的只读模式下分析 ClickHouse 数据"], imports: ["导入任务", "将 CSV 或 JSONEachRow 文件写入现有数据表"], ai: ["智能问数", "通过自然语言生成可核查的只读查询"] };
   return <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground"><Server className="size-3.5" /> {clusterName} <span>/</span> ClickHouse {version}</div><h1 className="text-2xl font-semibold tracking-[-0.025em]">{titles[view][0]}</h1><p className="mt-1 text-sm text-muted-foreground">{titles[view][1]}</p></div><div className="flex w-full gap-2 lg:w-auto">{(view === "overview" || view === "explorer") && <div className="relative min-w-0 flex-1 lg:w-80"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} className="h-10 bg-card pl-9" placeholder="搜索数据表…" /></div>}<Button variant="outline" size="icon-lg" onClick={onRefresh} disabled={refreshing || !connected} aria-label={connected ? "刷新" : "连接 ClickHouse 后刷新"}><RefreshCw className={refreshing ? "animate-spin" : ""} /></Button></div></div>;
 }
 

@@ -6,11 +6,17 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runner
-    image: ${COLUMNPILOT_IMAGE:-columnpilot:0.4.2}
+    image: ${COLUMNPILOT_IMAGE:-columnpilot:0.5.0}
     restart: unless-stopped
     environment:
       NODE_ENV: production
       COLUMNPILOT_ALLOW_PRIVATE_TARGETS: "true"
+      COLUMNPILOT_AI_MODE: ${COLUMNPILOT_AI_MODE:-disabled}
+      COLUMNPILOT_AI_ENDPOINT: ${COLUMNPILOT_AI_ENDPOINT:-}
+      COLUMNPILOT_AI_MODEL: ${COLUMNPILOT_AI_MODEL:-}
+      COLUMNPILOT_AI_API_KEY: ${COLUMNPILOT_AI_API_KEY:-}
+      COLUMNPILOT_AI_ALLOW_HTTP: ${COLUMNPILOT_AI_ALLOW_HTTP:-false}
+      COLUMNPILOT_AI_SIGNING_KEY: ${COLUMNPILOT_AI_SIGNING_KEY:-}
     ports:
       - "${COLUMNPILOT_BIND_ADDRESS:-127.0.0.1}:${COLUMNPILOT_PORT:-3000}:3000"
     depends_on:

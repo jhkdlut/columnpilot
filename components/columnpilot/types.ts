@@ -1,4 +1,4 @@
-export type View = "overview" | "explorer" | "sql" | "imports";
+export type View = "overview" | "explorer" | "sql" | "imports" | "ai";
 
 export type TableInfo = {
   database: string;
