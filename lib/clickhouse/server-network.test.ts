@@ -8,10 +8,17 @@ const { lookupMock, agentConstructor } = vi.hoisted(() => ({
 }));
 
 vi.mock("node:dns/promises", () => ({ lookup: lookupMock }));
-vi.mock("undici", async (importOriginal) => ({
-  ...await importOriginal<typeof import("undici")>(),
-  Agent: agentConstructor,
-}));
+vi.mock("undici", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("undici")>();
+  const nativeFetch = globalThis.fetch;
+  return {
+    ...actual,
+    Agent: agentConstructor,
+    fetch: (...args: Parameters<typeof actual.fetch>) => globalThis.fetch === nativeFetch
+      ? actual.fetch(...args)
+      : (globalThis.fetch as unknown as typeof actual.fetch)(...args),
+  };
+});
 
 import { MockAgent } from "undici";
 import { clickhouseImport, clickhouseQuery } from "./server";

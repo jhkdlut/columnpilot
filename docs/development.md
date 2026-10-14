@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Docker Desktop or another Docker Engine with Compose v2
-- Node.js 22.13 or newer
+- Node.js 22.19 or newer
 - npm
 
 ## Local workflow

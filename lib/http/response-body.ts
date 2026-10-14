@@ -1,6 +1,7 @@
 import { RequestError } from "./errors";
+import type { fetch as undiciFetch } from "undici";
 
-export async function readResponseText(response: Response, maxBytes: number): Promise<string> {
+export async function readResponseText(response: Pick<Response, "body"> | Pick<Awaited<ReturnType<typeof undiciFetch>>, "body">, maxBytes: number): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = [];

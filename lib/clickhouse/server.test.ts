@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const dnsLookupMock = vi.hoisted(() => vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]));
 
 vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
+vi.mock("undici", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("undici")>();
+  return { ...actual, fetch: (...args: Parameters<typeof actual.fetch>) => (globalThis.fetch as unknown as typeof actual.fetch)(...args) };
+});
 
 import {
   assertReadOnly,
